@@ -1,4 +1,8 @@
 use std::cmp::Ordering;
+use std::marker::PhantomData;
+use std::mem::size_of;
+use std::ops::Deref;
+use std::ops::DerefMut;
 use std::ops::Drop;
 
 use super::Mutex;
@@ -74,6 +78,25 @@ impl<const N: usize> LinkedListArrayAllocator<N> {
             None
         }
     }
+    
+    pub fn allocate_value<T>(&self) -> Option<TypedLinkedListArrayWrapper<N, T>> {
+        let blocks =
+            ((size_of::<T>() as f32) / (size_of::<LinkedListArrayBlock>() as f32)).ceil() as usize;
+        self.allocate(blocks)
+            .map(|wrapper| TypedLinkedListArrayWrapper {
+                wrapper,
+                __marker: PhantomData,
+            })
+    }
+    pub fn allocate_slice<T>(&self, len: usize) -> Option<TypedLinkedListArrayWrapper<N, [T]>> {
+        let blocks = (((len * size_of::<T>()) as f32) / (size_of::<LinkedListArrayBlock>() as f32))
+            .ceil() as usize;
+        self.allocate(blocks)
+            .map(|wrapper| TypedLinkedListArrayWrapper {
+                wrapper,
+                __marker: PhantomData,
+            })
+    }
 }
 
 #[derive(Debug, Eq, PartialEq)]
@@ -107,11 +130,42 @@ impl<const N: usize> Default for InnerLinkedListArrayAllocator<N> {
         }
     }
 }
+
 #[derive(Debug, Eq, PartialEq)]
 #[repr(C)]
-struct LinkedListArrayBlock {
+pub struct LinkedListArrayBlock {
     size: usize,
     next: Option<usize>,
+}
+
+pub struct TypedLinkedListArrayWrapper<'a, const N: usize, T: ?Sized> {
+    pub wrapper: LinkedListArrayWrapper<'a, N>,
+    __marker: PhantomData<T>,
+}
+
+impl<'a, const N: usize, T> TypedLinkedListArrayWrapper<'a, N, T> {
+    pub fn allocator(&self) -> &LinkedListArrayAllocator<N> {
+        self.wrapper.allocator
+    }
+    pub fn index(&self) -> usize {
+        self.wrapper.index
+    }
+    pub fn size(&self) -> usize {
+        self.wrapper.size
+    }
+}
+
+impl<'a, const N: usize, T> Deref for TypedLinkedListArrayWrapper<'a, N, T> {
+    type Target = T;
+
+    fn deref(&self) -> &Self::Target {
+        unsafe { &*(self.wrapper.deref() as *const [LinkedListArrayBlock]).cast() }
+    }
+}
+impl<'a, const N: usize, T> DerefMut for TypedLinkedListArrayWrapper<'a, N, T> {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        unsafe { &mut *(self.wrapper.deref_mut() as *mut [LinkedListArrayBlock]).cast() }
+    }
 }
 
 #[derive(Debug)]
@@ -120,6 +174,33 @@ pub struct LinkedListArrayWrapper<'a, const N: usize> {
     allocator: &'a LinkedListArrayAllocator<N>,
     index: usize,
     size: usize,
+}
+
+impl<'a, const N: usize> LinkedListArrayWrapper<'a, N> {
+    pub fn allocator(&self) -> &LinkedListArrayAllocator<N> {
+        self.allocator
+    }
+    pub fn index(&self) -> usize {
+        self.index
+    }
+    pub fn size(&self) -> usize {
+        self.size
+    }
+}
+
+impl<'a, const N: usize> Deref for LinkedListArrayWrapper<'a, N> {
+    type Target = [LinkedListArrayBlock];
+
+    fn deref(&self) -> &Self::Target {
+        let allocator = unsafe { &*self.allocator.0.get() };
+        &allocator.data[self.index..self.index + self.size]
+    }
+}
+impl<'a, const N: usize> DerefMut for LinkedListArrayWrapper<'a, N> {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        let allocator = unsafe { &mut *self.allocator.0.get() };
+        &mut allocator.data[self.index..self.index + self.size]
+    }
 }
 
 impl<'a, const N: usize> Drop for LinkedListArrayWrapper<'a, N> {
@@ -282,23 +363,93 @@ impl<'a, const N: usize> Drop for LinkedListArrayWrapper<'a, N> {
     }
 }
 
-impl<'a, const N: usize> LinkedListArrayWrapper<'a, N> {
-    pub fn allocate(&self) -> &LinkedListArrayAllocator<N> {
-        self.allocator
-    }
-    pub fn index(&self) -> usize {
-        self.index
-    }
-    pub fn size(&self) -> usize {
-        self.size
-    }
-}
-
 #[cfg(test)]
 mod tests {
     #![allow(clippy::pedantic)]
 
     use super::*;
+
+    #[test]
+    fn typed_linked_list_array_wrapper_allocator() {
+        let allocator = LinkedListArrayAllocator::<1>::new(None);
+        let wrapper = allocator.allocate_value::<u8>().unwrap();
+        wrapper.allocator();
+    }
+
+    #[test]
+    fn typed_linked_list_array_wrapper_index() {
+        let allocator = LinkedListArrayAllocator::<1>::new(None);
+        let wrapper = allocator.allocate_value::<u8>().unwrap();
+        assert_eq!(wrapper.index(), 0);
+    }
+    #[test]
+    fn typed_linked_list_array_wrapper_size() {
+        let allocator = LinkedListArrayAllocator::<1>::new(None);
+        let wrapper = allocator.allocate_value::<u8>().unwrap();
+        assert_eq!(wrapper.size(), 1);
+    }
+
+    #[test]
+    fn typed_linked_list_array_wrapper_deref() {
+        let allocator = LinkedListArrayAllocator::<1>::new(None);
+        let wrapper = allocator.allocate_value::<()>().unwrap();
+        assert_eq!(*wrapper, ());
+    }
+    #[test]
+    fn typed_linked_list_array_wrapper_deref_mut() {
+        let allocator = LinkedListArrayAllocator::<1>::new(None);
+        let mut wrapper = allocator.allocate_value::<u8>().unwrap();
+        *wrapper = 0;
+        assert_eq!(*wrapper, 0);
+    }
+
+    #[test]
+    fn inner_linked_list_array_allocator_debug() {
+        assert_eq!(
+            format!("{:?}", InnerLinkedListArrayAllocator::<0>::default()),
+            "InnerLinkedListArrayAllocator { head: None, data: [] }"
+        );
+    }
+
+    #[test]
+    fn linked_list_array_block_debug() {
+        assert_eq!(
+            format!(
+                "{:?}",
+                LinkedListArrayBlock {
+                    size: 0,
+                    next: None
+                }
+            ),
+            "LinkedListArrayBlock { size: 0, next: None }"
+        );
+    }
+
+    #[test]
+    fn linked_list_array_wrapper_debug() {
+        let allocator = LinkedListArrayAllocator::<0>::new(None);
+        assert_eq!(format!("{:?}",LinkedListArrayWrapper { allocator: &allocator, index:0,size: 0}),"LinkedListArrayWrapper { allocator: LinkedListArrayAllocator(Mutex { lock: Mutex(UnsafeCell { .. }), data: UnsafeCell { .. } }), index: 0, size: 0 }");
+    }
+
+    #[test]
+    fn linked_list_array_wrapper_allocator() {
+        let allocator = LinkedListArrayAllocator::<1>::new(None);
+        let wrapper = allocator.allocate(1).unwrap();
+        wrapper.allocator();
+    }
+
+    #[test]
+    fn linked_list_array_wrapper_index() {
+        let allocator = LinkedListArrayAllocator::<1>::new(None);
+        let wrapper = allocator.allocate(1).unwrap();
+        assert_eq!(wrapper.index(), 0);
+    }
+    #[test]
+    fn linked_list_array_wrapper_size() {
+        let allocator = LinkedListArrayAllocator::<1>::new(None);
+        let wrapper = allocator.allocate(1).unwrap();
+        assert_eq!(wrapper.size(), 1);
+    }
 
     #[test]
     fn linked_list() {
@@ -463,36 +614,21 @@ mod tests {
     }
 
     #[test]
+    fn linked_list_allocate_value() {
+        let allocator = LinkedListArrayAllocator::<1>::new(None);
+        allocator.allocate_value::<()>().unwrap();
+    }
+    #[test]
+    fn linked_list_allocate_slice() {
+        let allocator = LinkedListArrayAllocator::<1>::new(None);
+        allocator
+            .allocate_slice::<u8>(size_of::<LinkedListArrayBlock>())
+            .unwrap();
+    }
+
+    #[test]
     fn linked_list_debug() {
         assert_eq!(format!("{:?}", LinkedListArrayAllocator::<0>::new(None)),"LinkedListArrayAllocator(Mutex { lock: Mutex(UnsafeCell { .. }), data: UnsafeCell { .. } })");
-    }
-
-    #[test]
-    fn inner_linked_list_array_allocator_debug() {
-        assert_eq!(
-            format!("{:?}", InnerLinkedListArrayAllocator::<0>::default()),
-            "InnerLinkedListArrayAllocator { head: None, data: [] }"
-        );
-    }
-
-    #[test]
-    fn linked_list_array_block_debug() {
-        assert_eq!(
-            format!(
-                "{:?}",
-                LinkedListArrayBlock {
-                    size: 0,
-                    next: None
-                }
-            ),
-            "LinkedListArrayBlock { size: 0, next: None }"
-        );
-    }
-
-    #[test]
-    fn linked_list_array_wrapper_debug() {
-        let allocator = LinkedListArrayAllocator::<0>::new(None);
-        assert_eq!(format!("{:?}",LinkedListArrayWrapper { allocator: &allocator, index:0,size: 0}),"LinkedListArrayWrapper { allocator: LinkedListArrayAllocator(Mutex { lock: Mutex(UnsafeCell { .. }), data: UnsafeCell { .. } }), index: 0, size: 0 }");
     }
 
     // Tests `LinkedListArrayWrapper::allocate` `blocks.cmp(&allocator.data[next].size) == Equal` case.
