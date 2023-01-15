@@ -191,28 +191,28 @@ mod tests {
     }
 
     #[test]
-    fn slab_array_wrapper_allocator() {
+    fn wrapper_allocator() {
         let allocator = Allocator::<1, ()>::new(None);
         let wrapper = allocator.allocate(()).unwrap();
         let _ = wrapper.allocator();
     }
 
     #[test]
-    fn slab_array_wrapper_index() {
+    fn wrapper_index() {
         let allocator = Allocator::<1, ()>::new(None);
         let wrapper = allocator.allocate(()).unwrap();
         assert_eq!(wrapper.index(), 0);
     }
 
     #[test]
-    fn slab_array_wrapper_deref() {
+    fn wrapper_deref() {
         let allocator = Allocator::<1, u8>::new(None);
         let wrapper = allocator.allocate(0).unwrap();
         assert_eq!(*wrapper, 0);
     }
 
     #[test]
-    fn slab_array_wrapper_deref_mut() {
+    fn wrapper_deref_mut() {
         let allocator = Allocator::<1, u8>::new(None);
         let mut wrapper = allocator.allocate(0).unwrap();
         assert_eq!(*wrapper, 0);
@@ -222,19 +222,19 @@ mod tests {
 
     // `None` head
     #[test]
-    fn slab_drop_0() {
+    fn drop_0() {
         let memory = Allocator::<1, ()>::new(None);
         memory.allocate(()).unwrap();
     }
     // `head > self.index`
     #[test]
-    fn slab_drop_1() {
+    fn drop_1() {
         let memory = Allocator::<2, ()>::new(None);
         memory.allocate(()).unwrap();
     }
     // `head < self.index`
     #[test]
-    fn slab_drop_2() {
+    fn drop_2() {
         let memory = Allocator::<3, ()>::new(None);
         let a = memory.allocate(()).unwrap();
         let b = memory.allocate(()).unwrap();
@@ -244,7 +244,7 @@ mod tests {
     }
     // `head < self.index` and `Some(next) = unsafe { inner_allocator.data[current].empty }`
     #[test]
-    fn slab_drop_3() {
+    fn drop_3() {
         let memory = Allocator::<4, ()>::new(None);
         let a = memory.allocate(()).unwrap();
         let b = memory.allocate(()).unwrap();

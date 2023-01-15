@@ -441,7 +441,7 @@ mod tests {
     use super::*;
 
     #[test]
-    fn slice_linked_list_array_wrapper_debug() {
+    fn slice_debug() {
         let allocator = Allocator::<3>::new(None);
         let wrapper = allocator.allocate_slice::<u8>(3).unwrap();
         assert_eq!(
@@ -452,31 +452,37 @@ mod tests {
         );
     }
     #[test]
-    fn slice_linked_list_array_wrapper_allocator() {
+    fn slice_allocator() {
         let allocator = Allocator::<3>::new(None);
         let wrapper = allocator.allocate_slice::<u8>(3).unwrap();
         let _ = wrapper.allocator();
     }
     #[test]
-    fn slice_linked_list_array_wrapper_index() {
+    fn slice_index() {
         let allocator = Allocator::<3>::new(None);
         let wrapper = allocator.allocate_slice::<u8>(3).unwrap();
         assert_eq!(wrapper.index(), 0);
     }
     #[test]
-    fn slice_linked_list_array_wrapper_size() {
+    fn slice_size() {
         let allocator = Allocator::<3>::new(None);
         let wrapper = allocator.allocate_slice::<u8>(3).unwrap();
         assert_eq!(wrapper.size(), 1);
     }
     #[test]
-    fn slice_linked_list_array_wrapper_len() {
+    fn slice_len() {
         let allocator = Allocator::<3>::new(None);
         let wrapper = allocator.allocate_slice::<u8>(3).unwrap();
         assert_eq!(wrapper.len(), 3);
     }
     #[test]
-    fn slice_linked_list_array_wrapper_deref() {
+    fn slice_is_empty() {
+        let allocator = Allocator::<3>::new(None);
+        let wrapper = allocator.allocate_slice::<u8>(3).unwrap();
+        assert!(!wrapper.is_empty());
+    }
+    #[test]
+    fn slice_deref() {
         let allocator = Allocator::<3>::new(None);
         let mut wrapper = allocator.allocate_slice::<u8>(3).unwrap();
         wrapper[0] = 0;
@@ -487,7 +493,7 @@ mod tests {
         assert_eq!(wrapper[2], 2);
     }
     #[test]
-    fn slice_linked_list_array_wrapper_deref_mut() {
+    fn slice_deref_mut() {
         let allocator = Allocator::<3>::new(None);
         let mut wrapper = allocator.allocate_slice::<u8>(3).unwrap();
         wrapper[0] = 0;
@@ -499,7 +505,7 @@ mod tests {
     }
 
     #[test]
-    fn typed_linked_list_array_wrapper_debug() {
+    fn value_debug() {
         let allocator = Allocator::<1>::new(None);
         let wrapper = allocator.allocate_value::<u8>().unwrap();
         assert_eq!(
@@ -509,32 +515,32 @@ mod tests {
         );
     }
     #[test]
-    fn typed_linked_list_array_wrapper_allocator() {
+    fn value_allocator() {
         let allocator = Allocator::<1>::new(None);
         let wrapper = allocator.allocate_value::<u8>().unwrap();
         let _ = wrapper.allocator();
     }
     #[test]
-    fn typed_linked_list_array_wrapper_index() {
+    fn value_index() {
         let allocator = Allocator::<1>::new(None);
         let wrapper = allocator.allocate_value::<u8>().unwrap();
         assert_eq!(wrapper.index(), 0);
     }
     #[test]
-    fn typed_linked_list_array_wrapper_size() {
+    fn value_size() {
         let allocator = Allocator::<1>::new(None);
         let wrapper = allocator.allocate_value::<u8>().unwrap();
         assert_eq!(wrapper.size(), 1);
     }
     #[test]
-    fn typed_linked_list_array_wrapper_deref() {
+    fn value_deref() {
         let allocator = Allocator::<1>::new(None);
         let mut wrapper = allocator.allocate_value::<u8>().unwrap();
         *wrapper = 0;
         assert_eq!(*wrapper, 0);
     }
     #[test]
-    fn typed_linked_list_array_wrapper_deref_mut() {
+    fn value_deref_mut() {
         let allocator = Allocator::<1>::new(None);
         let mut wrapper = allocator.allocate_value::<u8>().unwrap();
         *wrapper = 0;
@@ -549,7 +555,7 @@ mod tests {
         );
     }
     #[test]
-    fn linked_list_array_block_debug() {
+    fn block_debug() {
         assert_eq!(
             format!(
                 "{:?}",
@@ -562,7 +568,7 @@ mod tests {
         );
     }
     #[test]
-    fn linked_list_array_wrapper_debug() {
+    fn wrapper_debug() {
         let allocator = Allocator::<0>::new(None);
         assert_eq!(
             format!(
@@ -578,19 +584,19 @@ mod tests {
         );
     }
     #[test]
-    fn linked_list_array_wrapper_allocator() {
+    fn wrapper_allocator() {
         let allocator = Allocator::<1>::new(None);
         let wrapper = allocator.allocate(1).unwrap();
         let _ = wrapper.allocator();
     }
     #[test]
-    fn linked_list_array_wrapper_index() {
+    fn wrapper_index() {
         let allocator = Allocator::<1>::new(None);
         let wrapper = allocator.allocate(1).unwrap();
         assert_eq!(wrapper.index(), 0);
     }
     #[test]
-    fn linked_list_array_wrapper_size() {
+    fn wrapper_size() {
         let allocator = Allocator::<1>::new(None);
         let wrapper = allocator.allocate(1).unwrap();
         assert_eq!(wrapper.size(), 1);
@@ -759,12 +765,12 @@ mod tests {
     }
 
     #[test]
-    fn linked_list_allocate_value() {
+    fn allocate_value() {
         let allocator = Allocator::<1>::new(None);
         allocator.allocate_value::<()>().unwrap();
     }
     #[test]
-    fn linked_list_allocate_slice() {
+    fn allocate_slice() {
         let allocator = Allocator::<1>::new(None);
         allocator.allocate_slice::<u8>(size_of::<Block>()).unwrap();
     }
@@ -779,20 +785,20 @@ mod tests {
 
     // Tests `Wrapper::allocate` `blocks.cmp(&allocator.data[next].size) == Equal` case.
     #[test]
-    fn linked_list_allocate_0() {
+    fn allocate_0() {
         let memory = Allocator::<1>::new(None);
         memory.allocate(1).unwrap();
     }
     // Tests `Wrapper::allocate` `blocks.cmp(&allocator.data[next].size) == Less` case.
     #[test]
-    fn linked_list_allocate_1() {
+    fn allocate_1() {
         let memory = Allocator::<2>::new(None);
         memory.allocate(1).unwrap();
     }
     // Tests `Wrapper::allocate` `blocks.cmp(&allocator.data[next].size) == Greater`
     // `blocks.cmp(&allocator.data[next].size) == Equal` case.
     #[test]
-    fn linked_list_allocate_2() {
+    fn allocate_2() {
         let memory = Allocator::<4>::new(None);
         let a = memory.allocate(1).unwrap();
         let b = memory.allocate(1).unwrap();
@@ -806,7 +812,7 @@ mod tests {
     // Tests `Wrapper::allocate` `blocks.cmp(&allocator.data[next].size) == Greater`
     // `blocks.cmp(&allocator.data[next].size) == Less` case.
     #[test]
-    fn linked_list_allocate_3() {
+    fn allocate_3() {
         let memory = Allocator::<5>::new(None);
         let a = memory.allocate(1).unwrap();
         let b = memory.allocate(1).unwrap();
@@ -820,7 +826,7 @@ mod tests {
     // Tests `Wrapper::allocate` `blocks.cmp(&allocator.data[next].size) == Greater`
     // `blocks.cmp(&allocator.data[next].size) == Greater` case.
     #[test]
-    fn linked_list_allocate_4() {
+    fn allocate_4() {
         let memory = Allocator::<7>::new(None);
         let a = memory.allocate(1).unwrap();
         let b = memory.allocate(1).unwrap();
@@ -835,7 +841,7 @@ mod tests {
     }
     // Tests `Wrapper::allocate` `blocks.cmp(&allocator.data[next].size) == Greater` `None` case.
     #[test]
-    fn linked_list_allocate_5() {
+    fn allocate_5() {
         let memory = Allocator::<6>::new(None);
         let a = memory.allocate(1).unwrap();
         let b = memory.allocate(1).unwrap();
@@ -850,7 +856,7 @@ mod tests {
     }
     // Tests `Wrapper::allocate` `None` header case.
     #[test]
-    fn linked_list_allocate_6() {
+    fn allocate_6() {
         let memory = Allocator::<0>::new(None);
         assert!(memory.allocate(1).is_none());
     }
@@ -860,7 +866,7 @@ mod tests {
     // │...│
     // └───┘
     #[test]
-    fn linked_list_drop_1() {
+    fn drop_1() {
         let memory = Allocator::<1>::new(None);
         let item = memory.allocate(1).unwrap();
         drop(item);
@@ -871,7 +877,7 @@ mod tests {
     // │...│self│head│...│
     // └───┴────┴────┴───┘
     #[test]
-    fn linked_list_drop_2() {
+    fn drop_2() {
         let memory = Allocator::<1>::new(None);
         let item = memory.allocate(1).unwrap();
         drop(item);
@@ -882,7 +888,7 @@ mod tests {
     // │...│self│...│head│...│
     // └───┴────┴───┴────┴───┘
     #[test]
-    fn linked_list_drop_3() {
+    fn drop_3() {
         let memory = Allocator::<2>::new(None);
 
         let first = memory.allocate(1).unwrap();
@@ -898,7 +904,7 @@ mod tests {
     // │...│index│self│next│...│
     // └───┴─────┴────┴────┴───┘
     #[test]
-    fn linked_list_drop_4() {
+    fn drop_4() {
         let memory = Allocator::<4>::new(None);
 
         let a = memory.allocate(1).unwrap();
@@ -925,7 +931,7 @@ mod tests {
     // │...│index│self│...│next│...│
     // └───┴─────┴────┴───┴────┴───┘
     #[test]
-    fn linked_list_drop_5() {
+    fn drop_5() {
         let memory = Allocator::<5>::new(None);
 
         let a = memory.allocate(1).unwrap(); // ...
@@ -953,7 +959,7 @@ mod tests {
     // │...│index│self│...│
     // └───┴─────┴────┴───┘
     #[test]
-    fn linked_list_drop_6() {
+    fn drop_6() {
         let memory = Allocator::<3>::new(None);
 
         let a = memory.allocate(1).unwrap();
@@ -978,7 +984,7 @@ mod tests {
     // │...│index│...│self│next│...│
     // └───┴─────┴───┴────┴────┴───┘
     #[test]
-    fn linked_list_drop_7() {
+    fn drop_7() {
         let memory = Allocator::<5>::new(None);
 
         let a = memory.allocate(1).unwrap();
@@ -1008,7 +1014,7 @@ mod tests {
     // │...│index│...│self│...│next│...│
     // └───┴─────┴───┴────┴───┴────┴───┘
     #[test]
-    fn linked_list_drop_8() {
+    fn drop_8() {
         let memory = Allocator::<6>::new(None);
 
         let a = memory.allocate(1).unwrap();
@@ -1040,7 +1046,7 @@ mod tests {
     // │...│index│...│next│...│self│...│
     // └───┴─────┴───┴────┴───┴────┴───┘
     #[test]
-    fn linked_list_drop_9() {
+    fn drop_9() {
         let memory = Allocator::<6>::new(None);
 
         let a = memory.allocate(1).unwrap();
@@ -1072,7 +1078,7 @@ mod tests {
     // │...│index│...│self│...│
     // └───┴─────┴───┴────┴───┘
     #[test]
-    fn linked_list_drop_10() {
+    fn drop_10() {
         let memory = Allocator::<4>::new(None);
 
         let a = memory.allocate(1).unwrap();
