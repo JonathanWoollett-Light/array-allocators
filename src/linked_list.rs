@@ -414,6 +414,12 @@ impl<'a, const N: usize, T> Slice<'a, N, T> {
     pub fn is_empty(&self) -> bool {
         self.len == 0
     }
+
+    pub fn resize(&mut self, len: usize) -> Option<()> {
+        let new = self.wrapper.allocator.allocate_slice(len)?;
+        *self = new;
+        Some(())
+    }
 }
 
 impl<'a, const N: usize, T> Deref for Slice<'a, N, T> {
@@ -480,6 +486,12 @@ mod tests {
         let allocator = Allocator::<3>::new(None);
         let wrapper = allocator.allocate_slice::<u8>(3).unwrap();
         assert!(!wrapper.is_empty());
+    }
+    #[test]
+    fn slice_resize() {
+        let allocator = Allocator::<5>::new(None);
+        let mut wrapper = allocator.allocate_slice::<u8>(2).unwrap();
+        wrapper.resize(3).unwrap();
     }
     #[test]
     fn slice_deref() {
