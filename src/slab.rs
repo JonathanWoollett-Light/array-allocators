@@ -4,22 +4,23 @@ use std::ops::Drop;
 use super::Mutex;
 
 #[repr(C)]
-pub struct SlabArrayAllocator<const N: usize, T>(Mutex<InnerSlabArrayAllocator<N, T>>);
+pub struct Allocator<const N: usize, T>(Mutex<InnerSlabArrayAllocator<N, T>>);
 
-impl<const N: usize, T> SlabArrayAllocator<N, T> {
+impl<const N: usize, T> Allocator<N, T> {
     #[must_use]
     pub fn new(attr: Option<nix::sys::pthread::MutexAttr>) -> Self {
         Self(Mutex::new(InnerSlabArrayAllocator::default(), attr))
     }
-    pub fn allocate(&self, x: T) -> Option<SlabArrayWrapper<N, T>> {
+
+    pub fn allocate(&self, x: T) -> Option<Wrapper<N, T>> {
         let mut inner_allocator = self.0.lock();
         if let Some(head) = inner_allocator.head {
             let index = head;
             inner_allocator.head = unsafe { inner_allocator.data[index].empty };
-            inner_allocator.data[index] = SlabArrayBlock {
+            inner_allocator.data[index] = Block {
                 full: ManuallyDrop::new(x),
             };
-            Some(SlabArrayWrapper {
+            Some(Wrapper {
                 allocator: self,
                 index,
             })
@@ -32,17 +33,17 @@ impl<const N: usize, T> SlabArrayAllocator<N, T> {
 #[repr(C)]
 struct InnerSlabArrayAllocator<const N: usize, T> {
     head: Option<usize>,
-    data: [SlabArrayBlock<T>; N],
+    data: [Block<T>; N],
 }
 #[allow(clippy::needless_range_loop)]
 impl<const N: usize, T> Default for InnerSlabArrayAllocator<N, T> {
     fn default() -> Self {
         if N > 0 {
-            let mut data: [SlabArrayBlock<T>; N] = unsafe { std::mem::zeroed() };
+            let mut data: [Block<T>; N] = unsafe { std::mem::zeroed() };
             for i in 0..(N - 1) {
-                data[i] = SlabArrayBlock { empty: Some(i + 1) };
+                data[i] = Block { empty: Some(i + 1) };
             }
-            data[N - 1] = SlabArrayBlock { empty: None };
+            data[N - 1] = Block { empty: None };
 
             Self {
                 head: Some(0),
@@ -58,29 +59,30 @@ impl<const N: usize, T> Default for InnerSlabArrayAllocator<N, T> {
 }
 
 #[repr(C)]
-union SlabArrayBlock<T> {
+union Block<T> {
     empty: Option<usize>,
     full: ManuallyDrop<T>,
 }
 
 #[repr(C)]
-pub struct SlabArrayWrapper<'a, const N: usize, T> {
-    allocator: &'a SlabArrayAllocator<N, T>,
+pub struct Wrapper<'a, const N: usize, T> {
+    allocator: &'a Allocator<N, T>,
     index: usize,
 }
 
-impl<'a, const N: usize, T> SlabArrayWrapper<'a, N, T> {
+impl<'a, const N: usize, T> Wrapper<'a, N, T> {
     #[must_use]
-    pub fn allocator(&self) -> &SlabArrayAllocator<N, T> {
+    pub fn allocator(&self) -> &Allocator<N, T> {
         self.allocator
     }
+
     #[must_use]
     pub fn index(&self) -> usize {
         self.index
     }
 }
 
-impl<'a, const N: usize, T> Drop for SlabArrayWrapper<'a, N, T> {
+impl<'a, const N: usize, T> Drop for Wrapper<'a, N, T> {
     fn drop(&mut self) {
         let mut inner_allocator = self.allocator.0.lock();
 
@@ -90,7 +92,7 @@ impl<'a, const N: usize, T> Drop for SlabArrayWrapper<'a, N, T> {
                 unsafe {
                     ManuallyDrop::drop(&mut inner_allocator.data[self.index].full);
                 }
-                inner_allocator.data[self.index] = SlabArrayBlock { empty: Some(head) };
+                inner_allocator.data[self.index] = Block { empty: Some(head) };
                 inner_allocator.head = Some(self.index);
             } else {
                 debug_assert!(head < self.index);
@@ -100,7 +102,7 @@ impl<'a, const N: usize, T> Drop for SlabArrayWrapper<'a, N, T> {
                         unsafe {
                             ManuallyDrop::drop(&mut inner_allocator.data[self.index].full);
                         }
-                        inner_allocator.data[self.index] = SlabArrayBlock { empty: Some(next) };
+                        inner_allocator.data[self.index] = Block { empty: Some(next) };
                         inner_allocator.data[current].empty = Some(self.index);
                         break;
                     }
@@ -112,12 +114,12 @@ impl<'a, const N: usize, T> Drop for SlabArrayWrapper<'a, N, T> {
                 ManuallyDrop::drop(&mut inner_allocator.data[self.index].full);
             }
             inner_allocator.head = Some(self.index);
-            inner_allocator.data[self.index] = SlabArrayBlock { empty: None };
+            inner_allocator.data[self.index] = Block { empty: None };
         }
     }
 }
 
-impl<'a, const N: usize, T> std::ops::Deref for SlabArrayWrapper<'a, N, T> {
+impl<'a, const N: usize, T> std::ops::Deref for Wrapper<'a, N, T> {
     type Target = T;
 
     fn deref(&self) -> &Self::Target {
@@ -125,7 +127,7 @@ impl<'a, const N: usize, T> std::ops::Deref for SlabArrayWrapper<'a, N, T> {
         unsafe { &*std::ptr::addr_of!(allocator.data[self.index]).cast() }
     }
 }
-impl<'a, const N: usize, T> std::ops::DerefMut for SlabArrayWrapper<'a, N, T> {
+impl<'a, const N: usize, T> std::ops::DerefMut for Wrapper<'a, N, T> {
     fn deref_mut(&mut self) -> &mut Self::Target {
         let allocator = unsafe { &mut *self.allocator.0.get() };
 
@@ -137,17 +139,18 @@ impl<'a, const N: usize, T> std::ops::DerefMut for SlabArrayWrapper<'a, N, T> {
 mod tests {
     #![allow(clippy::pedantic)]
 
-    use super::*;
+    use std::time::{Duration, Instant};
 
     use rand::Rng;
-    use std::time::{Duration, Instant};
+
+    use super::*;
 
     #[test]
     fn slab() {
         const SIZE: usize = 100;
         const MAX: usize = 1_000_000;
 
-        let memory = SlabArrayAllocator::<SIZE, u64>::new(None);
+        let memory = Allocator::<SIZE, u64>::new(None);
 
         let mut rng = rand::thread_rng();
         // Vector to store allocated items.
@@ -189,28 +192,28 @@ mod tests {
 
     #[test]
     fn slab_array_wrapper_allocator() {
-        let allocator = SlabArrayAllocator::<1, ()>::new(None);
+        let allocator = Allocator::<1, ()>::new(None);
         let wrapper = allocator.allocate(()).unwrap();
         let _ = wrapper.allocator();
     }
 
     #[test]
     fn slab_array_wrapper_index() {
-        let allocator = SlabArrayAllocator::<1, ()>::new(None);
+        let allocator = Allocator::<1, ()>::new(None);
         let wrapper = allocator.allocate(()).unwrap();
         assert_eq!(wrapper.index(), 0);
     }
 
     #[test]
     fn slab_array_wrapper_deref() {
-        let allocator = SlabArrayAllocator::<1, u8>::new(None);
+        let allocator = Allocator::<1, u8>::new(None);
         let wrapper = allocator.allocate(0).unwrap();
         assert_eq!(*wrapper, 0);
     }
 
     #[test]
     fn slab_array_wrapper_deref_mut() {
-        let allocator = SlabArrayAllocator::<1, u8>::new(None);
+        let allocator = Allocator::<1, u8>::new(None);
         let mut wrapper = allocator.allocate(0).unwrap();
         assert_eq!(*wrapper, 0);
         *wrapper = 1;
@@ -220,19 +223,19 @@ mod tests {
     // `None` head
     #[test]
     fn slab_drop_0() {
-        let memory = SlabArrayAllocator::<1, ()>::new(None);
+        let memory = Allocator::<1, ()>::new(None);
         memory.allocate(()).unwrap();
     }
     // `head > self.index`
     #[test]
     fn slab_drop_1() {
-        let memory = SlabArrayAllocator::<2, ()>::new(None);
+        let memory = Allocator::<2, ()>::new(None);
         memory.allocate(()).unwrap();
     }
     // `head < self.index`
     #[test]
     fn slab_drop_2() {
-        let memory = SlabArrayAllocator::<3, ()>::new(None);
+        let memory = Allocator::<3, ()>::new(None);
         let a = memory.allocate(()).unwrap();
         let b = memory.allocate(()).unwrap();
         drop(a);
@@ -242,7 +245,7 @@ mod tests {
     // `head < self.index` and `Some(next) = unsafe { inner_allocator.data[current].empty }`
     #[test]
     fn slab_drop_3() {
-        let memory = SlabArrayAllocator::<4, ()>::new(None);
+        let memory = Allocator::<4, ()>::new(None);
         let a = memory.allocate(()).unwrap();
         let b = memory.allocate(()).unwrap();
         let c = memory.allocate(()).unwrap();

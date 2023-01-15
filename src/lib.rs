@@ -1,6 +1,6 @@
+#![feature(ptr_metadata)]
 #![warn(clippy::pedantic)]
 #![allow(
-    clippy::module_name_repetitions,
     clippy::cast_precision_loss,
     clippy::cast_sign_loss,
     clippy::cast_possible_truncation
@@ -9,11 +9,17 @@
 use std::cell::UnsafeCell;
 use std::ops::Drop;
 
-mod linked_list;
-pub use linked_list::*;
+pub mod linked_list;
 
-mod slab;
-pub use slab::*;
+pub type LinkedListAllocator<const N: usize> = linked_list::Allocator<N>;
+pub type LinkedListWrapper<'a, const N: usize> = linked_list::Wrapper<'a, N>;
+pub type LinkedListValue<'a, const N: usize, T> = linked_list::Value<'a, N, T>;
+pub type LinkedListSlice<'a, const N: usize, T> = linked_list::Slice<'a, N, T>;
+
+pub mod slab;
+
+pub type SlabAllocator<const N: usize, T> = slab::Allocator<N, T>;
+pub type SlabWrapper<'a, const N: usize, T> = slab::Wrapper<'a, N, T>;
 
 #[derive(Debug)]
 #[repr(C)]
