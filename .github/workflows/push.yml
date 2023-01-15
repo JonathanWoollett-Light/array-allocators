@@ -18,6 +18,9 @@ jobs:
 
       - name: Use nightly
         run: rustup default nightly
+        
+      - name: Add clippy
+        run: rustup component add clippy
 
       - name: Install cargo-make
         run: cargo install cargo-make

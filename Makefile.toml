@@ -14,7 +14,6 @@ dependencies = ["format"]
 
 # Clippy
 [tasks.clippy]
-install_crate = "cargo-clippy"
 command = "cargo"
 args = ["clippy","--tests"]
 dependencies = ["check"]
