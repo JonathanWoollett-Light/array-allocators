@@ -16,6 +16,9 @@ jobs:
       - name: Run gitlint
         run: gitlint
 
+      - name: Use nightly
+        run: rustup default nightly
+
       - name: Install cargo-make
         run: cargo install cargo-make
 
