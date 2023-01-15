@@ -416,7 +416,10 @@ impl<'a, const N: usize, T> Slice<'a, N, T> {
     }
 
     pub fn resize(&mut self, len: usize) -> Option<()> {
-        let new = self.wrapper.allocator.allocate_slice(len)?;
+        let mut new = self.wrapper.allocator.allocate_slice(len)?;
+        unsafe {
+            std::ptr::copy_nonoverlapping(&self[0], &mut new[0], self.len);
+        }
         *self = new;
         Some(())
     }
@@ -491,7 +494,11 @@ mod tests {
     fn slice_resize() {
         let allocator = Allocator::<5>::new(None);
         let mut wrapper = allocator.allocate_slice::<u8>(2).unwrap();
+        wrapper[0] = 0;
+        wrapper[1] = 1;
         wrapper.resize(3).unwrap();
+        wrapper[0] = 0;
+        wrapper[1] = 1;
     }
     #[test]
     fn slice_deref() {
