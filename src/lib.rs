@@ -11,7 +11,7 @@ pub use slab::*;
 
 #[derive(Debug)]
 #[repr(C)]
-pub struct Mutex<T> {
+struct Mutex<T> {
     lock: nix::sys::pthread::Mutex,
     data: std::cell::UnsafeCell<T>,
 }
@@ -40,17 +40,8 @@ impl<T> Mutex<T> {
     pub unsafe fn get(&self) -> *mut T {
         self.data.get()
     }
-
-    /// Returns a reference to the underlying data without locking.
-    ///
-    /// # Safety
-    ///
-    /// Does not lock the data.
-    pub unsafe fn get_mut(&mut self) -> &mut T {
-        self.data.get_mut()
-    }
 }
-pub struct MutexGuard<'a, T>(&'a Mutex<T>);
+struct MutexGuard<'a, T>(&'a Mutex<T>);
 unsafe impl<T> Sync for Mutex<T> {}
 impl<'a, T> std::ops::Deref for MutexGuard<'a, T> {
     type Target = T;
@@ -83,16 +74,11 @@ mod tests {
             "Mutex { lock: Mutex(UnsafeCell { .. }), data: UnsafeCell { .. } }"
         );
     }
+    
     #[test]
     fn mutex_get() {
         unsafe {
             Mutex::new((), None).get();
-        }
-    }
-    #[test]
-    fn mutex_get_mut() {
-        unsafe {
-            Mutex::new((), None).get_mut();
         }
     }
 }
