@@ -18,11 +18,11 @@ command = "cargo"
 args = ["clippy","--tests"]
 dependencies = ["check"]
 
-# Check dead dependencies
-[tasks.udeps]
-install_crate = "cargo-udeps"
+# Audit dependencies
+[tasks.audit]
+install_crate = "cargo-audit"
 command = "cargo"
-args = ["udeps"]
+args = ["audit"]
 dependencies = ["clippy"]
 
 # Test

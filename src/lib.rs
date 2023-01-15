@@ -1,4 +1,10 @@
 #![warn(clippy::pedantic)]
+#![allow(
+    clippy::module_name_repetitions,
+    clippy::cast_precision_loss,
+    clippy::cast_sign_loss,
+    clippy::cast_possible_truncation
+)]
 
 use std::cell::UnsafeCell;
 use std::ops::Drop;
@@ -74,7 +80,7 @@ mod tests {
             "Mutex { lock: Mutex(UnsafeCell { .. }), data: UnsafeCell { .. } }"
         );
     }
-    
+
     #[test]
     fn mutex_get() {
         unsafe {

@@ -12,6 +12,7 @@ use super::Mutex;
 pub struct LinkedListArrayAllocator<const N: usize>(Mutex<InnerLinkedListArrayAllocator<N>>);
 
 impl<const N: usize> LinkedListArrayAllocator<N> {
+    #[must_use]
     pub fn new(attr: Option<nix::sys::pthread::MutexAttr>) -> Self {
         Self(Mutex::new(InnerLinkedListArrayAllocator::default(), attr))
     }
@@ -78,7 +79,7 @@ impl<const N: usize> LinkedListArrayAllocator<N> {
             None
         }
     }
-    
+
     pub fn allocate_value<T>(&self) -> Option<TypedLinkedListArrayWrapper<N, T>> {
         let blocks =
             ((size_of::<T>() as f32) / (size_of::<LinkedListArrayBlock>() as f32)).ceil() as usize;
@@ -143,13 +144,16 @@ pub struct TypedLinkedListArrayWrapper<'a, const N: usize, T: ?Sized> {
     __marker: PhantomData<T>,
 }
 
-impl<'a, const N: usize, T> TypedLinkedListArrayWrapper<'a, N, T> {
+impl<'a, const N: usize, T: ?Sized> TypedLinkedListArrayWrapper<'a, N, T> {
+    #[must_use]
     pub fn allocator(&self) -> &LinkedListArrayAllocator<N> {
         self.wrapper.allocator
     }
+    #[must_use]
     pub fn index(&self) -> usize {
         self.wrapper.index
     }
+    #[must_use]
     pub fn size(&self) -> usize {
         self.wrapper.size
     }
@@ -159,12 +163,12 @@ impl<'a, const N: usize, T> Deref for TypedLinkedListArrayWrapper<'a, N, T> {
     type Target = T;
 
     fn deref(&self) -> &Self::Target {
-        unsafe { &*(self.wrapper.deref() as *const [LinkedListArrayBlock]).cast() }
+        unsafe { &*std::ptr::addr_of!(*self.wrapper).cast() }
     }
 }
 impl<'a, const N: usize, T> DerefMut for TypedLinkedListArrayWrapper<'a, N, T> {
     fn deref_mut(&mut self) -> &mut Self::Target {
-        unsafe { &mut *(self.wrapper.deref_mut() as *mut [LinkedListArrayBlock]).cast() }
+        unsafe { &mut *std::ptr::addr_of_mut!(*self.wrapper).cast() }
     }
 }
 
@@ -177,12 +181,15 @@ pub struct LinkedListArrayWrapper<'a, const N: usize> {
 }
 
 impl<'a, const N: usize> LinkedListArrayWrapper<'a, N> {
+    #[must_use]
     pub fn allocator(&self) -> &LinkedListArrayAllocator<N> {
         self.allocator
     }
+    #[must_use]
     pub fn index(&self) -> usize {
         self.index
     }
+    #[must_use]
     pub fn size(&self) -> usize {
         self.size
     }
@@ -373,7 +380,7 @@ mod tests {
     fn typed_linked_list_array_wrapper_allocator() {
         let allocator = LinkedListArrayAllocator::<1>::new(None);
         let wrapper = allocator.allocate_value::<u8>().unwrap();
-        wrapper.allocator();
+        let _ = wrapper.allocator();
     }
 
     #[test]
@@ -392,8 +399,9 @@ mod tests {
     #[test]
     fn typed_linked_list_array_wrapper_deref() {
         let allocator = LinkedListArrayAllocator::<1>::new(None);
-        let wrapper = allocator.allocate_value::<()>().unwrap();
-        assert_eq!(*wrapper, ());
+        let mut wrapper = allocator.allocate_value::<u8>().unwrap();
+        *wrapper = 0;
+        assert_eq!(*wrapper, 0);
     }
     #[test]
     fn typed_linked_list_array_wrapper_deref_mut() {
@@ -435,7 +443,7 @@ mod tests {
     fn linked_list_array_wrapper_allocator() {
         let allocator = LinkedListArrayAllocator::<1>::new(None);
         let wrapper = allocator.allocate(1).unwrap();
-        wrapper.allocator();
+        let _ = wrapper.allocator();
     }
 
     #[test]

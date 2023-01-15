@@ -7,6 +7,7 @@ use super::Mutex;
 pub struct SlabArrayAllocator<const N: usize, T>(Mutex<InnerSlabArrayAllocator<N, T>>);
 
 impl<const N: usize, T> SlabArrayAllocator<N, T> {
+    #[must_use]
     pub fn new(attr: Option<nix::sys::pthread::MutexAttr>) -> Self {
         Self(Mutex::new(InnerSlabArrayAllocator::default(), attr))
     }
@@ -69,9 +70,11 @@ pub struct SlabArrayWrapper<'a, const N: usize, T> {
 }
 
 impl<'a, const N: usize, T> SlabArrayWrapper<'a, N, T> {
+    #[must_use]
     pub fn allocator(&self) -> &SlabArrayAllocator<N, T> {
         self.allocator
     }
+    #[must_use]
     pub fn index(&self) -> usize {
         self.index
     }
@@ -119,13 +122,14 @@ impl<'a, const N: usize, T> std::ops::Deref for SlabArrayWrapper<'a, N, T> {
 
     fn deref(&self) -> &Self::Target {
         let allocator = unsafe { &*self.allocator.0.get() };
-        unsafe { &*(&allocator.data[self.index] as *const SlabArrayBlock<T>).cast() }
+        unsafe { &*std::ptr::addr_of!(allocator.data[self.index]).cast() }
     }
 }
 impl<'a, const N: usize, T> std::ops::DerefMut for SlabArrayWrapper<'a, N, T> {
     fn deref_mut(&mut self) -> &mut Self::Target {
         let allocator = unsafe { &mut *self.allocator.0.get() };
-        unsafe { &mut *(&mut allocator.data[self.index] as *mut SlabArrayBlock<T>).cast() }
+
+        unsafe { &mut *std::ptr::addr_of_mut!(allocator.data[self.index]).cast() }
     }
 }
 
@@ -187,7 +191,7 @@ mod tests {
     fn slab_array_wrapper_allocator() {
         let allocator = SlabArrayAllocator::<1, ()>::new(None);
         let wrapper = allocator.allocate(()).unwrap();
-        wrapper.allocator();
+        let _ = wrapper.allocator();
     }
 
     #[test]
@@ -199,9 +203,9 @@ mod tests {
 
     #[test]
     fn slab_array_wrapper_deref() {
-        let allocator = SlabArrayAllocator::<1, ()>::new(None);
-        let wrapper = allocator.allocate(()).unwrap();
-        assert_eq!(*wrapper, ());
+        let allocator = SlabArrayAllocator::<1, u8>::new(None);
+        let wrapper = allocator.allocate(0).unwrap();
+        assert_eq!(*wrapper, 0);
     }
 
     #[test]
