@@ -1,0 +1,15 @@
+[package]
+name = "array-allocators"
+version = "0.1.0"
+edition = "2021"
+
+description = "Memory allocators that manage memory within an array."
+license = "Apache-2.0"
+repository = "https://github.com/JonathanWoollett-Light/array-allocators"
+
+[dependencies]
+nix = { git = "https://github.com/JonathanWoollett-Light/nix", rev = "87da68c0a8d09333e72199fe978b2d6c5191d11b"}
+
+
+[dev-dependencies]
+rand = "0.8.5"

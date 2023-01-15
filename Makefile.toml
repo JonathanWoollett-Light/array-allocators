@@ -1,0 +1,40 @@
+[tasks.default]
+alias = "lcov"
+
+# Format
+[tasks.format]
+command = "cargo"
+args = ["fmt"]
+
+# Check build
+[tasks.check]
+command = "cargo"
+args = ["check"]
+dependencies = ["format"]
+
+# Clippy
+[tasks.clippy]
+command = "cargo"
+args = ["clippy","--tests"]
+dependencies = ["check"]
+
+# Check dead dependencies
+[tasks.udeps]
+install_crate = "cargo-udeps"
+command = "cargo"
+args = ["udeps"]
+dependencies = ["clippy"]
+
+# Test
+[tasks.test]
+install_crate = "cargo-nextest"
+command = "cargo"
+args = ["nextest","run"]
+dependencies = ["audit"]
+
+# Coverage
+[tasks.lcov]
+install_crate = "cargo-llvm-cov"
+command = "cargo"
+args = ["llvm-cov", "--lcov", "--output-path", "lcov.info"]
+dependencies = ["test"]
