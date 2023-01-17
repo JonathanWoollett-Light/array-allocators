@@ -13,6 +13,22 @@ impl<const N: usize, T> Allocator<N, T> {
         Self(Mutex::new(InnerAllocator::default(), attr))
     }
 
+    /// Initializes `Self` at `ptr`.
+    ///
+    /// # Safety
+    ///
+    /// `ptr` must be valid.
+    ///
+    /// # Panics
+    ///
+    /// When failing to initialize the inner mutex.
+    pub unsafe fn init(ptr: *mut Self, attr: Option<nix::sys::pthread::MutexAttr>) {
+        let lock_ptr = ptr.cast::<nix::sys::pthread::Mutex>();
+        lock_ptr.write(nix::sys::pthread::Mutex::new(attr).unwrap());
+        let data_ptr = lock_ptr.add(1).cast::<InnerAllocator<N, T>>();
+        <InnerAllocator<N, T>>::init(data_ptr);
+    }
+
     pub fn allocate(&self, x: T) -> Option<Wrapper<N, T>> {
         let mut inner_allocator = self.0.lock();
         if let Some(head) = inner_allocator.head {
@@ -88,6 +104,24 @@ impl<'a, const N: usize, T> Iterator for WrapperIterator<'a, N, T> {
 pub struct InnerAllocator<const N: usize, T> {
     head: Option<usize>,
     data: [Block<T>; N],
+}
+
+#[allow(clippy::needless_range_loop)]
+impl<const N: usize, T> InnerAllocator<N, T> {
+    unsafe fn init(ptr: *mut Self) {
+        let head_ptr = ptr.cast::<Option<usize>>();
+        let data_ptr = head_ptr.add(1).cast::<[Block<T>; N]>();
+        if N > 0 {
+            head_ptr.write(Some(0));
+            let data_ref = &mut *data_ptr;
+            for i in 0..(N - 1) {
+                data_ref[i] = Block { empty: Some(i + 1) };
+            }
+            data_ref[N - 1] = Block { empty: None };
+        } else {
+            head_ptr.write(None);
+        }
+    }
 }
 
 #[allow(clippy::needless_range_loop)]
@@ -954,6 +988,20 @@ mod tests {
             format!("{:?}", Allocator::<0, ()>::new(None)),
             "Allocator(Mutex { lock: Mutex(UnsafeCell { .. }), data: UnsafeCell { .. } })"
         );
+    }
+    #[test]
+    fn allocator_init() {
+        let mut uninit_allocator = std::mem::MaybeUninit::uninit();
+        unsafe {
+            <Allocator<3, u8>>::init(uninit_allocator.as_mut_ptr(), None);
+        }
+    }
+    #[test]
+    fn allocator_zero() {
+        let mut uninit_allocator = std::mem::MaybeUninit::uninit();
+        unsafe {
+            <Allocator<0, u8>>::init(uninit_allocator.as_mut_ptr(), None);
+        }
     }
 
     // `None` head

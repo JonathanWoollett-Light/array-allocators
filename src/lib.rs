@@ -53,6 +53,7 @@ impl<T> Mutex<T> {
         self.data.get()
     }
 }
+
 struct MutexGuard<'a, T>(&'a Mutex<T>);
 unsafe impl<T> Sync for Mutex<T> {}
 impl<'a, T> std::ops::Deref for MutexGuard<'a, T> {

@@ -7,12 +7,28 @@ use super::Mutex;
 
 #[derive(Debug)]
 #[repr(C)]
-pub struct Allocator<const N: usize>(Mutex<InnerLinkedListArrayAllocator<N>>);
+pub struct Allocator<const N: usize>(Mutex<InnerAllocator<N>>);
 
 impl<const N: usize> Allocator<N> {
     #[must_use]
     pub fn new(attr: Option<nix::sys::pthread::MutexAttr>) -> Self {
-        Self(Mutex::new(InnerLinkedListArrayAllocator::default(), attr))
+        Self(Mutex::new(InnerAllocator::default(), attr))
+    }
+
+    /// Initializes `Self` at `ptr`.
+    ///
+    /// # Safety
+    ///
+    /// `ptr` must be valid.
+    ///
+    /// # Panics
+    ///
+    /// When failing to initialize the inner mutex.
+    pub unsafe fn init(ptr: *mut Self, attr: Option<nix::sys::pthread::MutexAttr>) {
+        let lock_ptr = ptr.cast::<nix::sys::pthread::Mutex>();
+        lock_ptr.write(nix::sys::pthread::Mutex::new(attr).unwrap());
+        let data_ptr = lock_ptr.add(1).cast::<InnerAllocator<N>>();
+        <InnerAllocator<N>>::init(data_ptr);
     }
 
     pub fn allocate(&self, blocks: usize) -> Option<Wrapper<N>> {
@@ -100,14 +116,32 @@ impl<const N: usize> Allocator<N> {
 
 #[derive(Debug, Eq, PartialEq)]
 #[repr(C)]
-struct InnerLinkedListArrayAllocator<const N: usize> {
+struct InnerAllocator<const N: usize> {
     head: Option<usize>,
     data: [Block; N],
 }
-impl<const N: usize> Default for InnerLinkedListArrayAllocator<N> {
+
+impl<const N: usize> InnerAllocator<N> {
+    unsafe fn init(ptr: *mut Self) {
+        let head_ptr = ptr.cast::<Option<usize>>();
+        let data_ptr = head_ptr.add(1).cast::<[Block; N]>();
+        if N > 0 {
+            head_ptr.write(Some(0));
+            let data_ref = &mut *data_ptr;
+            data_ref[0] = Block {
+                size: N,
+                next: None,
+            };
+        } else {
+            head_ptr.write(None);
+        }
+    }
+}
+
+impl<const N: usize> Default for InnerAllocator<N> {
     fn default() -> Self {
         if N > 0 {
-            let mut data_memory = InnerLinkedListArrayAllocator {
+            let mut data_memory = InnerAllocator {
                 head: Some(0),
                 data: unsafe { std::mem::zeroed() },
             };
@@ -122,7 +156,7 @@ impl<const N: usize> Default for InnerLinkedListArrayAllocator<N> {
             }
             data_memory
         } else {
-            InnerLinkedListArrayAllocator {
+            InnerAllocator {
                 head: None,
                 data: unsafe { std::mem::zeroed() },
             }
@@ -567,10 +601,10 @@ mod tests {
     }
 
     #[test]
-    fn inner_linked_list_array_allocator_debug() {
+    fn inner_allocator_debug() {
         assert_eq!(
-            format!("{:?}", InnerLinkedListArrayAllocator::<0>::default()),
-            "InnerLinkedListArrayAllocator { head: None, data: [] }"
+            format!("{:?}", InnerAllocator::<0>::default()),
+            "InnerAllocator { head: None, data: [] }"
         );
     }
     #[test]
@@ -622,14 +656,14 @@ mod tests {
     }
 
     #[test]
-    fn linked_list() {
+    fn allocator() {
         // We hold items in a vec to prevent them being dropped;
         let memory = Allocator::<5>::new(None);
         let mut vec = Vec::new();
 
         assert_eq!(
             *memory.0.lock(),
-            InnerLinkedListArrayAllocator {
+            InnerAllocator {
                 head: Some(0),
                 data: [
                     Block {
@@ -660,7 +694,7 @@ mod tests {
 
         assert_eq!(
             *memory.0.lock(),
-            InnerLinkedListArrayAllocator {
+            InnerAllocator {
                 head: Some(1),
                 data: [
                     Block {
@@ -691,7 +725,7 @@ mod tests {
 
         assert_eq!(
             *memory.0.lock(),
-            InnerLinkedListArrayAllocator {
+            InnerAllocator {
                 head: Some(3),
                 data: [
                     Block {
@@ -722,7 +756,7 @@ mod tests {
 
         assert_eq!(
             *memory.0.lock(),
-            InnerLinkedListArrayAllocator {
+            InnerAllocator {
                 head: Some(1),
                 data: [
                     Block {
@@ -753,7 +787,7 @@ mod tests {
 
         assert_eq!(
             *memory.0.lock(),
-            InnerLinkedListArrayAllocator {
+            InnerAllocator {
                 head: Some(0),
                 data: [
                     Block {
@@ -784,6 +818,28 @@ mod tests {
     }
 
     #[test]
+    fn allocator_debug() {
+        assert_eq!(
+            format!("{:?}", Allocator::<0>::new(None)),
+            "Allocator(Mutex { lock: Mutex(UnsafeCell { .. }), data: UnsafeCell { .. } })"
+        );
+    }
+    #[test]
+    fn allocator_init() {
+        let mut uninit_allocator = std::mem::MaybeUninit::uninit();
+        unsafe {
+            <Allocator<3>>::init(uninit_allocator.as_mut_ptr(), None);
+        }
+    }
+    #[test]
+    fn allocator_init_zero() {
+        let mut uninit_allocator = std::mem::MaybeUninit::uninit();
+        unsafe {
+            <Allocator<0>>::init(uninit_allocator.as_mut_ptr(), None);
+        }
+    }
+
+    #[test]
     fn allocate_value() {
         let allocator = Allocator::<1>::new(None);
         allocator.allocate_value::<()>().unwrap();
@@ -792,14 +848,6 @@ mod tests {
     fn allocate_slice() {
         let allocator = Allocator::<1>::new(None);
         allocator.allocate_slice::<u8>(size_of::<Block>()).unwrap();
-    }
-
-    #[test]
-    fn linked_list_debug() {
-        assert_eq!(
-            format!("{:?}", Allocator::<0>::new(None)),
-            "Allocator(Mutex { lock: Mutex(UnsafeCell { .. }), data: UnsafeCell { .. } })"
-        );
     }
 
     // Tests `Wrapper::allocate` `blocks.cmp(&allocator.data[next].size) == Equal` case.
