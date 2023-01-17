@@ -29,13 +29,11 @@ impl<const N: usize> Allocator<N> {
     pub unsafe fn init(ptr: *mut Self, attr: Option<nix::sys::pthread::MutexAttr>) {
         #[cfg(feature = "log")]
         log::trace!("Allocator::init");
-        let lock_ptr = ptr.cast::<nix::sys::pthread::Mutex>();
+        (*ptr).0.lock = nix::sys::pthread::Mutex::new(attr).unwrap();
 
         #[cfg(feature = "log")]
         log::trace!("Allocator::init 2");
-        lock_ptr.write(nix::sys::pthread::Mutex::new(attr).unwrap());
-        let data_ptr = lock_ptr.add(1).cast::<InnerAllocator<N>>();
-        <InnerAllocator<N>>::init(data_ptr);
+        <InnerAllocator<N>>::init((*ptr).0.data.get());
     }
 
     pub fn allocate(&self, blocks: usize) -> Option<Wrapper<N>> {
@@ -139,26 +137,16 @@ impl<const N: usize> InnerAllocator<N> {
         #[cfg(feature = "log")]
         log::trace!("InnerAllocator::init");
 
-        let head_ptr = ptr.cast::<Option<usize>>();
-
-        #[cfg(feature = "log")]
-        log::trace!("InnerAllocator::init head_ptr: {head_ptr:?}");
-
-        let data_ptr = head_ptr.add(1).cast::<[Block; N]>();
-
-        #[cfg(feature = "log")]
-        log::trace!("InnerAllocator::init data_ptr: {data_ptr:?}");
-
         if N > 0 {
             #[cfg(feature = "log")]
             log::trace!("InnerAllocator::init non-empty");
 
-            head_ptr.write(Some(0));
+            (*ptr).head = Some(0);
 
             #[cfg(feature = "log")]
             log::trace!("InnerAllocator::init head written");
 
-            let data_ref = &mut *data_ptr;
+            let data_ref = &mut (*ptr).data;
             data_ref[0] = Block {
                 size: N,
                 next: None,
@@ -167,7 +155,7 @@ impl<const N: usize> InnerAllocator<N> {
             #[cfg(feature = "log")]
             log::trace!("InnerAllocator::init empty");
 
-            head_ptr.write(None);
+            (*ptr).head = None;
         }
     }
 }
