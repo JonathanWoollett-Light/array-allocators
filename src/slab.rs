@@ -109,16 +109,29 @@ pub struct InnerAllocator<const N: usize, T> {
 #[allow(clippy::needless_range_loop)]
 impl<const N: usize, T> InnerAllocator<N, T> {
     unsafe fn init(ptr: *mut Self) {
+        #[cfg(feature = "log")]
+        log::trace!("InnerAllocator::init");
+
         let head_ptr = ptr.cast::<Option<usize>>();
         let data_ptr = head_ptr.add(1).cast::<[Block<T>; N]>();
         if N > 0 {
+            #[cfg(feature = "log")]
+            log::trace!("InnerAllocator::init non-empty");
+
             head_ptr.write(Some(0));
+
+            #[cfg(feature = "log")]
+            log::trace!("InnerAllocator::init head written");
+
             let data_ref = &mut *data_ptr;
             for i in 0..(N - 1) {
                 data_ref[i] = Block { empty: Some(i + 1) };
             }
             data_ref[N - 1] = Block { empty: None };
         } else {
+            #[cfg(feature = "log")]
+            log::trace!("InnerAllocator::init empty");
+
             head_ptr.write(None);
         }
     }
@@ -127,7 +140,13 @@ impl<const N: usize, T> InnerAllocator<N, T> {
 #[allow(clippy::needless_range_loop)]
 impl<const N: usize, T> Default for InnerAllocator<N, T> {
     fn default() -> Self {
+        #[cfg(feature = "log")]
+        log::trace!("InnerAllocator::default");
+
         if N > 0 {
+            #[cfg(feature = "log")]
+            log::trace!("InnerAllocator::default non-empty");
+
             let mut data: [Block<T>; N] = unsafe { std::mem::zeroed() };
             for i in 0..(N - 1) {
                 data[i] = Block { empty: Some(i + 1) };
@@ -139,6 +158,9 @@ impl<const N: usize, T> Default for InnerAllocator<N, T> {
                 data,
             }
         } else {
+            #[cfg(feature = "log")]
+            log::trace!("InnerAllocator::default empty");
+
             Self {
                 head: None,
                 data: unsafe { std::mem::zeroed() },
@@ -155,6 +177,9 @@ union Block<T> {
 
 impl<T: std::fmt::Debug> std::fmt::Debug for Block<T> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        #[cfg(feature = "log")]
+        log::trace!("Block::fmt");
+
         f.debug_struct("Block")
             .field("empty", unsafe { &self.empty })
             .field("full", unsafe { &self.full })
@@ -172,17 +197,26 @@ pub struct Wrapper<'a, const N: usize, T> {
 impl<'a, const N: usize, T> Wrapper<'a, N, T> {
     #[must_use]
     pub fn allocator(&self) -> &Allocator<N, T> {
+        #[cfg(feature = "log")]
+        log::trace!("Wrapper::allocator");
+
         self.allocator
     }
 
     #[must_use]
     pub fn index(&self) -> usize {
+        #[cfg(feature = "log")]
+        log::trace!("Wrapper::index");
+
         self.index
     }
 }
 
 impl<'a, const N: usize, T> Drop for Wrapper<'a, N, T> {
     fn drop(&mut self) {
+        #[cfg(feature = "log")]
+        log::trace!("Wrapper::drop");
+
         let mut inner_allocator = self.allocator.0.lock();
 
         if let Some(head) = inner_allocator.head {
@@ -236,12 +270,18 @@ impl<'a, const N: usize, T> std::ops::Deref for Wrapper<'a, N, T> {
     type Target = T;
 
     fn deref(&self) -> &Self::Target {
+        #[cfg(feature = "log")]
+        log::trace!("Wrapper::deref");
+
         let allocator = unsafe { &*self.allocator.0.get() };
         unsafe { &*std::ptr::addr_of!(allocator.data[self.index]).cast() }
     }
 }
 impl<'a, const N: usize, T> std::ops::DerefMut for Wrapper<'a, N, T> {
     fn deref_mut(&mut self) -> &mut Self::Target {
+        #[cfg(feature = "log")]
+        log::trace!("Wrapper::deref_mut");
+
         let allocator = unsafe { &mut *self.allocator.0.get() };
 
         unsafe { &mut *std::ptr::addr_of_mut!(allocator.data[self.index]).cast() }

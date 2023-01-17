@@ -123,16 +123,37 @@ struct InnerAllocator<const N: usize> {
 
 impl<const N: usize> InnerAllocator<N> {
     unsafe fn init(ptr: *mut Self) {
+        #[cfg(feature = "log")]
+        log::trace!("InnerAllocator::init");
+
         let head_ptr = ptr.cast::<Option<usize>>();
+
+        #[cfg(feature = "log")]
+        log::trace!("InnerAllocator::init head_ptr: {head_ptr}");
+
         let data_ptr = head_ptr.add(1).cast::<[Block; N]>();
+
+        #[cfg(feature = "log")]
+        log::trace!("InnerAllocator::init data_ptr: {data_ptr}");
+
         if N > 0 {
+            #[cfg(feature = "log")]
+            log::trace!("InnerAllocator::init non-empty");
+
             head_ptr.write(Some(0));
+
+            #[cfg(feature = "log")]
+            log::trace!("InnerAllocator::init head written");
+
             let data_ref = &mut *data_ptr;
             data_ref[0] = Block {
                 size: N,
                 next: None,
             };
         } else {
+            #[cfg(feature = "log")]
+            log::trace!("InnerAllocator::init empty");
+
             head_ptr.write(None);
         }
     }
@@ -140,11 +161,21 @@ impl<const N: usize> InnerAllocator<N> {
 
 impl<const N: usize> Default for InnerAllocator<N> {
     fn default() -> Self {
+        #[cfg(feature = "log")]
+        log::trace!("InnerAllocator::default");
+
         if N > 0 {
+            #[cfg(feature = "log")]
+            log::trace!("InnerAllocator::default non-empty");
+
             let mut data_memory = InnerAllocator {
                 head: Some(0),
                 data: unsafe { std::mem::zeroed() },
             };
+
+            #[cfg(feature = "log")]
+            log::trace!("InnerAllocator::default head written");
+
             unsafe {
                 std::ptr::write(
                     &mut data_memory.data[0],
@@ -156,6 +187,9 @@ impl<const N: usize> Default for InnerAllocator<N> {
             }
             data_memory
         } else {
+            #[cfg(feature = "log")]
+            log::trace!("InnerAllocator::default empty");
+
             InnerAllocator {
                 head: None,
                 data: unsafe { std::mem::zeroed() },
@@ -181,16 +215,25 @@ pub struct Value<'a, const N: usize, T> {
 impl<'a, const N: usize, T> Value<'a, N, T> {
     #[must_use]
     pub fn allocator(&self) -> &Allocator<N> {
+        #[cfg(feature = "log")]
+        log::trace!("Value::allocator");
+
         self.wrapper.allocator
     }
 
     #[must_use]
     pub fn index(&self) -> usize {
+        #[cfg(feature = "log")]
+        log::trace!("Value::index");
+
         self.wrapper.index
     }
 
     #[must_use]
     pub fn size(&self) -> usize {
+        #[cfg(feature = "log")]
+        log::trace!("Value::size");
+
         self.wrapper.size
     }
 }
@@ -199,11 +242,17 @@ impl<'a, const N: usize, T> Deref for Value<'a, N, T> {
     type Target = T;
 
     fn deref(&self) -> &Self::Target {
+        #[cfg(feature = "log")]
+        log::trace!("Value::deref");
+
         unsafe { &*std::ptr::addr_of!(*self.wrapper).cast() }
     }
 }
 impl<'a, const N: usize, T> DerefMut for Value<'a, N, T> {
     fn deref_mut(&mut self) -> &mut Self::Target {
+        #[cfg(feature = "log")]
+        log::trace!("Value::deref_mut");
+
         unsafe { &mut *std::ptr::addr_of_mut!(*self.wrapper).cast() }
     }
 }
@@ -219,16 +268,25 @@ pub struct Wrapper<'a, const N: usize> {
 impl<'a, const N: usize> Wrapper<'a, N> {
     #[must_use]
     pub fn allocator(&self) -> &Allocator<N> {
+        #[cfg(feature = "log")]
+        log::trace!("Wrapper::allocator");
+
         self.allocator
     }
 
     #[must_use]
     pub fn index(&self) -> usize {
+        #[cfg(feature = "log")]
+        log::trace!("Wrapper::index");
+
         self.index
     }
 
     #[must_use]
     pub fn size(&self) -> usize {
+        #[cfg(feature = "log")]
+        log::trace!("Wrapper::size");
+
         self.size
     }
 }
@@ -237,12 +295,18 @@ impl<'a, const N: usize> Deref for Wrapper<'a, N> {
     type Target = [Block];
 
     fn deref(&self) -> &Self::Target {
+        #[cfg(feature = "log")]
+        log::trace!("Wrapper::deref");
+
         let allocator = unsafe { &*self.allocator.0.get() };
         &allocator.data[self.index..self.index + self.size]
     }
 }
 impl<'a, const N: usize> DerefMut for Wrapper<'a, N> {
     fn deref_mut(&mut self) -> &mut Self::Target {
+        #[cfg(feature = "log")]
+        log::trace!("Wrapper::deref_mut");
+
         let allocator = unsafe { &mut *self.allocator.0.get() };
         &mut allocator.data[self.index..self.index + self.size]
     }
@@ -250,6 +314,9 @@ impl<'a, const N: usize> DerefMut for Wrapper<'a, N> {
 
 impl<'a, const N: usize> Drop for Wrapper<'a, N> {
     fn drop(&mut self) {
+        #[cfg(feature = "log")]
+        log::trace!("Wrapper::drop");
+
         if self.size == 0 {
             return;
         }
@@ -426,30 +493,48 @@ pub struct Slice<'a, const N: usize, T> {
 impl<'a, const N: usize, T> Slice<'a, N, T> {
     #[must_use]
     pub fn allocator(&self) -> &Allocator<N> {
+        #[cfg(feature = "log")]
+        log::trace!("Slice::allocator");
+
         self.wrapper.allocator
     }
 
     #[must_use]
     pub fn index(&self) -> usize {
+        #[cfg(feature = "log")]
+        log::trace!("Slice::index");
+
         self.wrapper.index
     }
 
     #[must_use]
     pub fn size(&self) -> usize {
+        #[cfg(feature = "log")]
+        log::trace!("Slice::size");
+
         self.wrapper.size
     }
 
     #[must_use]
     pub fn len(&self) -> usize {
+        #[cfg(feature = "log")]
+        log::trace!("Slice::len");
+
         self.len
     }
 
     #[must_use]
     pub fn is_empty(&self) -> bool {
+        #[cfg(feature = "log")]
+        log::trace!("Slice::is_empty");
+
         self.len == 0
     }
 
     pub fn resize(&mut self, len: usize) -> Option<()> {
+        #[cfg(feature = "log")]
+        log::trace!("Slice::resize");
+
         let mut new = self.wrapper.allocator.allocate_slice(len)?;
         unsafe {
             std::ptr::copy_nonoverlapping(&self[0], &mut new[0], self.len);
@@ -463,11 +548,17 @@ impl<'a, const N: usize, T> Deref for Slice<'a, N, T> {
     type Target = [T];
 
     fn deref(&self) -> &Self::Target {
+        #[cfg(feature = "log")]
+        log::trace!("Slice::deref");
+
         unsafe { &*std::ptr::from_raw_parts(std::ptr::addr_of!(*self.wrapper).cast(), self.len) }
     }
 }
 impl<'a, const N: usize, T> DerefMut for Slice<'a, N, T> {
     fn deref_mut(&mut self) -> &mut Self::Target {
+        #[cfg(feature = "log")]
+        log::trace!("Slice::deref_mut");
+
         unsafe {
             &mut *std::ptr::from_raw_parts_mut(
                 std::ptr::addr_of_mut!(*self.wrapper).cast(),

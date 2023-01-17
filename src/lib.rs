@@ -34,6 +34,9 @@ impl<T> Mutex<T> {
     ///
     /// When [`nix::sys::pthread::Mutex::new`] errors.
     pub fn new(data: T, attr: Option<nix::sys::pthread::MutexAttr>) -> Self {
+        #[cfg(feature = "log")]
+        log::trace!("Mutex::new");
+
         Self {
             lock: nix::sys::pthread::Mutex::new(attr).unwrap(),
             data: UnsafeCell::new(data),
@@ -41,6 +44,9 @@ impl<T> Mutex<T> {
     }
 
     pub fn lock(&self) -> MutexGuard<T> {
+        #[cfg(feature = "log")]
+        log::trace!("Mutex::lock");
+
         MutexGuard(self)
     }
 
@@ -50,6 +56,9 @@ impl<T> Mutex<T> {
     ///
     /// Does not lock the data.
     pub unsafe fn get(&self) -> *mut T {
+        #[cfg(feature = "log")]
+        log::trace!("Mutex::get");
+
         self.data.get()
     }
 }
@@ -60,16 +69,25 @@ impl<'a, T> std::ops::Deref for MutexGuard<'a, T> {
     type Target = T;
 
     fn deref(&self) -> &Self::Target {
+        #[cfg(feature = "log")]
+        log::trace!("Mutex::deref");
+
         unsafe { &*self.0.data.get() }
     }
 }
 impl<'a, T> std::ops::DerefMut for MutexGuard<'a, T> {
     fn deref_mut(&mut self) -> &mut Self::Target {
+        #[cfg(feature = "log")]
+        log::trace!("Mutex::deref_mut");
+
         unsafe { &mut *self.0.data.get() }
     }
 }
 impl<'a, T> Drop for MutexGuard<'a, T> {
     fn drop(&mut self) {
+        #[cfg(feature = "log")]
+        log::trace!("Mutex::drop");
+
         self.0.lock.unlock().unwrap();
     }
 }
