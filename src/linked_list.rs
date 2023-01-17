@@ -12,6 +12,8 @@ pub struct Allocator<const N: usize>(Mutex<InnerAllocator<N>>);
 impl<const N: usize> Allocator<N> {
     #[must_use]
     pub fn new(attr: Option<nix::sys::pthread::MutexAttr>) -> Self {
+        #[cfg(feature = "log")]
+        log::trace!("Allocator::new");
         Self(Mutex::new(InnerAllocator::default(), attr))
     }
 
@@ -25,13 +27,20 @@ impl<const N: usize> Allocator<N> {
     ///
     /// When failing to initialize the inner mutex.
     pub unsafe fn init(ptr: *mut Self, attr: Option<nix::sys::pthread::MutexAttr>) {
+        #[cfg(feature = "log")]
+        log::trace!("Allocator::init");
         let lock_ptr = ptr.cast::<nix::sys::pthread::Mutex>();
+
+        #[cfg(feature = "log")]
+        log::trace!("Allocator::init 2");
         lock_ptr.write(nix::sys::pthread::Mutex::new(attr).unwrap());
         let data_ptr = lock_ptr.add(1).cast::<InnerAllocator<N>>();
         <InnerAllocator<N>>::init(data_ptr);
     }
 
     pub fn allocate(&self, blocks: usize) -> Option<Wrapper<N>> {
+        #[cfg(feature = "log")]
+        log::trace!("Allocator::allocate");
         let mut allocator = self.0.lock();
 
         if let Some(next) = allocator.head {
@@ -96,6 +105,8 @@ impl<const N: usize> Allocator<N> {
     }
 
     pub fn allocate_value<T>(&self) -> Option<Value<N, T>> {
+        #[cfg(feature = "log")]
+        log::trace!("Allocator::allocate_value");
         let blocks = ((size_of::<T>() as f32) / (size_of::<Block>() as f32)).ceil() as usize;
         self.allocate(blocks).map(|wrapper| Value {
             wrapper,
@@ -104,6 +115,8 @@ impl<const N: usize> Allocator<N> {
     }
 
     pub fn allocate_slice<T>(&self, len: usize) -> Option<Slice<N, T>> {
+        #[cfg(feature = "log")]
+        log::trace!("Allocator::allocate_slice");
         let blocks =
             (((len * size_of::<T>()) as f32) / (size_of::<Block>() as f32)).ceil() as usize;
         self.allocate(blocks).map(|wrapper| Slice {

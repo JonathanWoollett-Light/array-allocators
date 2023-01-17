@@ -10,6 +10,9 @@ pub struct Allocator<const N: usize, T>(Mutex<InnerAllocator<N, T>>);
 impl<const N: usize, T> Allocator<N, T> {
     #[must_use]
     pub fn new(attr: Option<nix::sys::pthread::MutexAttr>) -> Self {
+        #[cfg(feature = "log")]
+        log::trace!("Allocator::new");
+
         Self(Mutex::new(InnerAllocator::default(), attr))
     }
 
@@ -23,13 +26,22 @@ impl<const N: usize, T> Allocator<N, T> {
     ///
     /// When failing to initialize the inner mutex.
     pub unsafe fn init(ptr: *mut Self, attr: Option<nix::sys::pthread::MutexAttr>) {
+        #[cfg(feature = "log")]
+        log::trace!("Allocator::init");
+
         let lock_ptr = ptr.cast::<nix::sys::pthread::Mutex>();
         lock_ptr.write(nix::sys::pthread::Mutex::new(attr).unwrap());
+
+        #[cfg(feature = "log")]
+        log::trace!("Allocator::init 2");
+
         let data_ptr = lock_ptr.add(1).cast::<InnerAllocator<N, T>>();
         <InnerAllocator<N, T>>::init(data_ptr);
     }
 
     pub fn allocate(&self, x: T) -> Option<Wrapper<N, T>> {
+        #[cfg(feature = "log")]
+        log::trace!("Allocator::allocate");
         let mut inner_allocator = self.0.lock();
         if let Some(head) = inner_allocator.head {
             let index = head;
@@ -59,6 +71,8 @@ impl<const N: usize, T> Allocator<N, T> {
     /// `drop(x.iter().collect::<Vec<_>>())` would free all memory, invalidating any wrappers
     /// presently held.
     pub unsafe fn iter(&self) -> WrapperIterator<N, T> {
+        #[cfg(feature = "log")]
+        log::trace!("Allocator::iter");
         let head = self.0.lock().head;
         WrapperIterator {
             allocator: self,
