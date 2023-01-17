@@ -129,12 +129,12 @@ impl<const N: usize> InnerAllocator<N> {
         let head_ptr = ptr.cast::<Option<usize>>();
 
         #[cfg(feature = "log")]
-        log::trace!("InnerAllocator::init head_ptr: {head_ptr}");
+        log::trace!("InnerAllocator::init head_ptr: {head_ptr:?}");
 
         let data_ptr = head_ptr.add(1).cast::<[Block; N]>();
 
         #[cfg(feature = "log")]
-        log::trace!("InnerAllocator::init data_ptr: {data_ptr}");
+        log::trace!("InnerAllocator::init data_ptr: {data_ptr:?}");
 
         if N > 0 {
             #[cfg(feature = "log")]
