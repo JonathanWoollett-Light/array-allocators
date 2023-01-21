@@ -35,6 +35,7 @@ dependencies = ["udeps"]
 
 # Test
 [tasks.test]
+install_crate = "cargo-all-features"
 command = "cargo"
 args = ["test-all-features"]
 dependencies = ["audit"]
