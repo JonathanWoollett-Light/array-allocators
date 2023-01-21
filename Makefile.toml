@@ -8,8 +8,9 @@ args = ["fmt"]
 
 # Check build
 [tasks.check]
+install_crate = "cargo-all-features"
 command = "cargo"
-args = ["check"]
+args = ["check-all-features"]
 dependencies = ["format"]
 
 # Clippy
@@ -34,9 +35,8 @@ dependencies = ["udeps"]
 
 # Test
 [tasks.test]
-install_crate = "cargo-nextest"
 command = "cargo"
-args = ["nextest","run"]
+args = ["test-all-features"]
 dependencies = ["audit"]
 
 # Coverage

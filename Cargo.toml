@@ -8,8 +8,12 @@ license = "Apache-2.0"
 repository = "https://github.com/JonathanWoollett-Light/array-allocators"
 
 [dependencies]
-nix = { git = "https://github.com/JonathanWoollett-Light/nix", rev = "87da68c0a8d09333e72199fe978b2d6c5191d11b"}
+nix = { git = "https://github.com/JonathanWoollett-Light/nix", rev = "87da68c0a8d09333e72199fe978b2d6c5191d11b", optional = true }
 log = { version = "0.4.17", optional = true }
 
 [dev-dependencies]
 rand = "0.8.5"
+
+[features]
+default = ["repr_c"]
+repr_c = ["nix"]

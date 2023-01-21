@@ -1,19 +1,32 @@
 use std::mem::ManuallyDrop;
 use std::ops::Drop;
 
-use super::Mutex;
-
+#[cfg(feature = "repr_c")]
 #[derive(Debug)]
 #[repr(C)]
-pub struct Allocator<const N: usize, T>(Mutex<InnerAllocator<N, T>>);
+pub struct Allocator<const N: usize, T>(crate::mutex::Mutex<InnerAllocator<N, T>>);
+
+#[cfg(not(feature = "repr_c"))]
+#[derive(Debug)]
+pub struct Allocator<const N: usize, T>(std::sync::Mutex<InnerAllocator<N, T>>);
 
 impl<const N: usize, T> Allocator<N, T> {
+    #[cfg(feature = "repr_c")]
     #[must_use]
     pub fn new(attr: Option<nix::sys::pthread::MutexAttr>) -> Self {
         #[cfg(feature = "log")]
         log::trace!("Allocator::new");
 
-        Self(Mutex::new(InnerAllocator::default(), attr))
+        Self(crate::mutex::Mutex::new(InnerAllocator::default(), attr))
+    }
+
+    #[cfg(not(feature = "repr_c"))]
+    #[must_use]
+    pub fn new() -> Self {
+        #[cfg(feature = "log")]
+        log::trace!("Allocator::new");
+
+        Self(std::sync::Mutex::new(InnerAllocator::default()))
     }
 
     /// Initializes `Self` at `ptr`.
@@ -25,6 +38,7 @@ impl<const N: usize, T> Allocator<N, T> {
     /// # Panics
     ///
     /// When failing to initialize the inner mutex.
+    #[cfg(feature = "repr_c")]
     pub unsafe fn init(ptr: *mut Self, attr: Option<nix::sys::pthread::MutexAttr>) {
         #[cfg(feature = "log")]
         log::trace!("Allocator::init");
@@ -34,13 +48,18 @@ impl<const N: usize, T> Allocator<N, T> {
         #[cfg(feature = "log")]
         log::trace!("Allocator::init 2");
 
-        <InnerAllocator<N, T>>::init((*ptr).0.data.get());
+        <InnerAllocator<N, T>>::init((*ptr).0.get());
     }
 
+    /// Allocates a given `x`.
+    ///
+    /// # Panics
+    ///
+    /// When locking the mutex fails.
     pub fn allocate(&self, x: T) -> Option<Wrapper<N, T>> {
         #[cfg(feature = "log")]
         log::trace!("Allocator::allocate");
-        let mut inner_allocator = self.0.lock();
+        let mut inner_allocator = self.0.lock().unwrap();
         if let Some(head) = inner_allocator.head {
             let index = head;
             inner_allocator.head = unsafe { inner_allocator.data[index].empty };
@@ -68,15 +87,31 @@ impl<const N: usize, T> Allocator<N, T> {
     ///
     /// `drop(x.iter().collect::<Vec<_>>())` would free all memory, invalidating any wrappers
     /// presently held.
+    ///
+    /// # Panics
+    ///
+    /// When locking the mutex fails.
     pub unsafe fn iter(&self) -> WrapperIterator<N, T> {
         #[cfg(feature = "log")]
         log::trace!("Allocator::iter");
-        let head = self.0.lock().head;
+        let head = self.0.lock().unwrap().head;
         WrapperIterator {
             allocator: self,
             free: head,
             used: 0,
         }
+    }
+}
+
+impl<const N: usize, T> Default for Allocator<N, T> {
+    fn default() -> Self {
+        #[cfg(feature = "repr_c")]
+        let rtn = Self::new(None);
+
+        #[cfg(not(feature = "repr_c"))]
+        let rtn = Self::new();
+
+        rtn
     }
 }
 
@@ -90,7 +125,7 @@ impl<'a, const N: usize, T> Iterator for WrapperIterator<'a, N, T> {
     type Item = Wrapper<'a, N, T>;
 
     fn next(&mut self) -> Option<Self::Item> {
-        let inner = self.allocator.0.lock();
+        let inner = self.allocator.0.lock().unwrap();
         loop {
             let free = self.free.unwrap_or(N);
             if self.used < free {
@@ -112,13 +147,14 @@ impl<'a, const N: usize, T> Iterator for WrapperIterator<'a, N, T> {
 }
 
 #[derive(Debug)]
-#[repr(C)]
+#[cfg_attr(feature = "repr_c", repr(C))]
 pub struct InnerAllocator<const N: usize, T> {
     head: Option<usize>,
     data: [Block<T>; N],
 }
 
 #[allow(clippy::needless_range_loop)]
+#[cfg(feature = "repr_c")]
 impl<const N: usize, T> InnerAllocator<N, T> {
     unsafe fn init(ptr: *mut Self) {
         #[cfg(feature = "log")]
@@ -179,7 +215,7 @@ impl<const N: usize, T> Default for InnerAllocator<N, T> {
     }
 }
 
-#[repr(C)]
+#[cfg_attr(feature = "repr_c", repr(C))]
 union Block<T> {
     empty: Option<usize>,
     full: ManuallyDrop<T>,
@@ -198,7 +234,7 @@ impl<T: std::fmt::Debug> std::fmt::Debug for Block<T> {
 }
 
 #[derive(Debug)]
-#[repr(C)]
+#[cfg_attr(feature = "repr_c", repr(C))]
 pub struct Wrapper<'a, const N: usize, T> {
     allocator: &'a Allocator<N, T>,
     index: usize,
@@ -227,7 +263,7 @@ impl<'a, const N: usize, T> Drop for Wrapper<'a, N, T> {
         #[cfg(feature = "log")]
         log::trace!("Wrapper::drop");
 
-        let mut inner_allocator = self.allocator.0.lock();
+        let mut inner_allocator = self.allocator.0.lock().unwrap();
 
         if let Some(head) = inner_allocator.head {
             debug_assert_ne!(head, self.index);
@@ -283,8 +319,24 @@ impl<'a, const N: usize, T> std::ops::Deref for Wrapper<'a, N, T> {
         #[cfg(feature = "log")]
         log::trace!("Wrapper::deref");
 
-        let allocator = unsafe { &*self.allocator.0.get() };
-        unsafe { &*std::ptr::addr_of!(allocator.data[self.index]).cast() }
+        // We circumvent acquiring a guard as we don't need to lock to safely dereference allocated
+        // memory.
+
+        #[cfg(feature = "repr_c")]
+        let inner_allocator = unsafe { &*self.allocator.0.get() };
+
+        #[cfg(not(feature = "repr_c"))]
+        #[allow(mutable_transmutes)]
+        let inner_allocator = unsafe {
+            std::mem::transmute::<
+                &std::sync::Mutex<InnerAllocator<N, T>>,
+                &mut std::sync::Mutex<InnerAllocator<N, T>>,
+            >(&self.allocator.0)
+            .get_mut()
+            .unwrap()
+        };
+
+        unsafe { &*std::ptr::addr_of!(inner_allocator.data[self.index]).cast() }
     }
 }
 impl<'a, const N: usize, T> std::ops::DerefMut for Wrapper<'a, N, T> {
@@ -292,9 +344,24 @@ impl<'a, const N: usize, T> std::ops::DerefMut for Wrapper<'a, N, T> {
         #[cfg(feature = "log")]
         log::trace!("Wrapper::deref_mut");
 
-        let allocator = unsafe { &mut *self.allocator.0.get() };
+        // We circumvent acquiring a guard as we don't need to lock to safely dereference allocated
+        // memory.
 
-        unsafe { &mut *std::ptr::addr_of_mut!(allocator.data[self.index]).cast() }
+        #[cfg(feature = "repr_c")]
+        let inner_allocator = unsafe { &mut *self.allocator.0.get() };
+
+        #[cfg(not(feature = "repr_c"))]
+        #[allow(mutable_transmutes)]
+        let inner_allocator = unsafe {
+            std::mem::transmute::<
+                &std::sync::Mutex<InnerAllocator<N, T>>,
+                &mut std::sync::Mutex<InnerAllocator<N, T>>,
+            >(&self.allocator.0)
+            .get_mut()
+            .unwrap()
+        };
+
+        unsafe { &mut *std::ptr::addr_of_mut!(inner_allocator.data[self.index]).cast() }
     }
 }
 
@@ -310,11 +377,11 @@ mod tests {
 
     #[test]
     fn slab_1() {
-        let memory = Allocator::<10, u8>::new(None);
+        let memory = Allocator::<10, u8>::default();
         const X: u8 = 1;
 
         {
-            let inner = memory.0.lock();
+            let inner = memory.0.lock().unwrap();
             assert_eq!(inner.head, Some(0));
             unsafe {
                 assert_eq!(inner.data[0].empty, Some(1));
@@ -333,7 +400,7 @@ mod tests {
         let a = memory.allocate(X).unwrap();
 
         {
-            let inner = memory.0.lock();
+            let inner = memory.0.lock().unwrap();
             assert_eq!(inner.head, Some(1));
             unsafe {
                 assert_eq!(*inner.data[0].full, X);
@@ -352,7 +419,7 @@ mod tests {
         let b = memory.allocate(X).unwrap();
 
         {
-            let inner = memory.0.lock();
+            let inner = memory.0.lock().unwrap();
             assert_eq!(inner.head, Some(2));
             unsafe {
                 assert_eq!(*inner.data[0].full, X);
@@ -371,7 +438,7 @@ mod tests {
         let c = memory.allocate(X).unwrap();
 
         {
-            let inner = memory.0.lock();
+            let inner = memory.0.lock().unwrap();
             assert_eq!(inner.head, Some(3));
             unsafe {
                 assert_eq!(*inner.data[0].full, X);
@@ -390,7 +457,7 @@ mod tests {
         let d = memory.allocate(X).unwrap();
 
         {
-            let inner = memory.0.lock();
+            let inner = memory.0.lock().unwrap();
             assert_eq!(inner.head, Some(4));
             unsafe {
                 assert_eq!(*inner.data[0].full, X);
@@ -409,7 +476,7 @@ mod tests {
         let e = memory.allocate(X).unwrap();
 
         {
-            let inner = memory.0.lock();
+            let inner = memory.0.lock().unwrap();
             assert_eq!(inner.head, Some(5));
             unsafe {
                 assert_eq!(*inner.data[0].full, X);
@@ -428,7 +495,7 @@ mod tests {
         let f = memory.allocate(X).unwrap();
 
         {
-            let inner = memory.0.lock();
+            let inner = memory.0.lock().unwrap();
             assert_eq!(inner.head, Some(6));
             unsafe {
                 assert_eq!(*inner.data[0].full, X);
@@ -447,7 +514,7 @@ mod tests {
         let g = memory.allocate(X).unwrap();
 
         {
-            let inner = memory.0.lock();
+            let inner = memory.0.lock().unwrap();
             assert_eq!(inner.head, Some(7));
             unsafe {
                 assert_eq!(*inner.data[0].full, X);
@@ -466,7 +533,7 @@ mod tests {
         let h = memory.allocate(X).unwrap();
 
         {
-            let inner = memory.0.lock();
+            let inner = memory.0.lock().unwrap();
             assert_eq!(inner.head, Some(8));
             unsafe {
                 assert_eq!(*inner.data[0].full, X);
@@ -485,7 +552,7 @@ mod tests {
         let i = memory.allocate(X).unwrap();
 
         {
-            let inner = memory.0.lock();
+            let inner = memory.0.lock().unwrap();
             assert_eq!(inner.head, Some(9));
             unsafe {
                 assert_eq!(*inner.data[0].full, X);
@@ -504,7 +571,7 @@ mod tests {
         let j = memory.allocate(X).unwrap();
 
         {
-            let inner = memory.0.lock();
+            let inner = memory.0.lock().unwrap();
             assert_eq!(inner.head, None);
             unsafe {
                 assert_eq!(*inner.data[0].full, X);
@@ -523,7 +590,7 @@ mod tests {
         drop(b);
 
         {
-            let inner = memory.0.lock();
+            let inner = memory.0.lock().unwrap();
             assert_eq!(inner.head, Some(1));
             unsafe {
                 assert_eq!(*inner.data[0].full, X);
@@ -542,7 +609,7 @@ mod tests {
         drop(d);
 
         {
-            let inner = memory.0.lock();
+            let inner = memory.0.lock().unwrap();
             assert_eq!(inner.head, Some(1));
             unsafe {
                 assert_eq!(*inner.data[0].full, X);
@@ -561,7 +628,7 @@ mod tests {
         drop(e);
 
         {
-            let inner = memory.0.lock();
+            let inner = memory.0.lock().unwrap();
             assert_eq!(inner.head, Some(1));
             unsafe {
                 assert_eq!(*inner.data[0].full, X);
@@ -580,7 +647,7 @@ mod tests {
         drop(i);
 
         {
-            let inner = memory.0.lock();
+            let inner = memory.0.lock().unwrap();
             assert_eq!(inner.head, Some(1));
             unsafe {
                 assert_eq!(*inner.data[0].full, X);
@@ -599,7 +666,7 @@ mod tests {
         drop(a);
 
         {
-            let inner = memory.0.lock();
+            let inner = memory.0.lock().unwrap();
             assert_eq!(inner.head, Some(0));
             unsafe {
                 assert_eq!(inner.data[0].empty, Some(1));
@@ -618,7 +685,7 @@ mod tests {
         drop(c);
 
         {
-            let inner = memory.0.lock();
+            let inner = memory.0.lock().unwrap();
             assert_eq!(inner.head, Some(0));
             unsafe {
                 assert_eq!(inner.data[0].empty, Some(1));
@@ -637,7 +704,7 @@ mod tests {
         drop(f);
 
         {
-            let inner = memory.0.lock();
+            let inner = memory.0.lock().unwrap();
             assert_eq!(inner.head, Some(0));
             unsafe {
                 assert_eq!(inner.data[0].empty, Some(1));
@@ -656,7 +723,7 @@ mod tests {
         drop(g);
 
         {
-            let inner = memory.0.lock();
+            let inner = memory.0.lock().unwrap();
             assert_eq!(inner.head, Some(0));
             unsafe {
                 assert_eq!(inner.data[0].empty, Some(1));
@@ -675,7 +742,7 @@ mod tests {
         drop(h);
 
         {
-            let inner = memory.0.lock();
+            let inner = memory.0.lock().unwrap();
             assert_eq!(inner.head, Some(0));
             unsafe {
                 assert_eq!(inner.data[0].empty, Some(1));
@@ -694,7 +761,7 @@ mod tests {
         drop(j);
 
         {
-            let inner = memory.0.lock();
+            let inner = memory.0.lock().unwrap();
             assert_eq!(inner.head, Some(0));
             unsafe {
                 assert_eq!(inner.data[0].empty, Some(1));
@@ -716,7 +783,7 @@ mod tests {
         const SIZE: usize = 100;
         const MAX: usize = 1_000_000;
 
-        let memory = Allocator::<SIZE, u64>::new(None);
+        let memory = Allocator::<SIZE, u64>::default();
 
         let mut rng = rand::thread_rng();
         // Vector to store allocated items.
@@ -753,17 +820,22 @@ mod tests {
 
     #[test]
     fn wrapper_iterator_debug() {
-        let memory = Allocator::<0, ()>::new(None);
-        assert_eq!(
-            format!("{:?}", unsafe { memory.iter() }),
-            "WrapperIterator { allocator: Allocator(Mutex { lock: Mutex(UnsafeCell { .. }), data: \
-             UnsafeCell { .. } }), free: None, used: 0 }"
-        );
+        let memory = Allocator::<0, ()>::default();
+
+        #[cfg(feature = "repr_c")]
+        let expected = "WrapperIterator { allocator: Allocator(Mutex { lock: Mutex(UnsafeCell { \
+                        .. }), data: UnsafeCell { .. } }), free: None, used: 0 }";
+
+        #[cfg(not(feature = "repr_c"))]
+        let expected = "WrapperIterator { allocator: Allocator(Mutex { data: InnerAllocator { \
+                        head: None, data: [] }, poisoned: false, .. }), free: None, used: 0 }";
+
+        assert_eq!(format!("{:?}", unsafe { memory.iter() }), expected);
     }
 
     #[test]
     fn wrapper_iterator() {
-        let memory = Allocator::<10, u8>::new(None);
+        let memory = Allocator::<10, u8>::default();
         const X: u8 = 1;
 
         let wrappers_1 = unsafe { ManuallyDrop::new(memory.iter().collect::<Vec<_>>()) };
@@ -993,39 +1065,45 @@ mod tests {
 
     #[test]
     fn wrapper_debug() {
-        let allocator = Allocator::<1, ()>::new(None);
+        let allocator = Allocator::<1, ()>::default();
         let wrapper = allocator.allocate(()).unwrap();
-        assert_eq!(
-            format!("{wrapper:?}"),
-            "Wrapper { allocator: Allocator(Mutex { lock: Mutex(UnsafeCell { .. }), data: \
-             UnsafeCell { .. } }), index: 0 }"
-        );
+
+        #[cfg(feature = "repr_c")]
+        let expected = "Wrapper { allocator: Allocator(Mutex { lock: Mutex(UnsafeCell { .. }), \
+                        data: UnsafeCell { .. } }), index: 0 }";
+
+        #[cfg(not(feature = "repr_c"))]
+        let expected = "Wrapper { allocator: Allocator(Mutex { data: InnerAllocator { head: None, \
+                        data: [Block { empty: None, full: ManuallyDrop { value: () } }] }, \
+                        poisoned: false, .. }), index: 0 }";
+
+        assert_eq!(format!("{wrapper:?}"), expected);
     }
 
     #[test]
     fn wrapper_allocator() {
-        let allocator = Allocator::<1, ()>::new(None);
+        let allocator = Allocator::<1, ()>::default();
         let wrapper = allocator.allocate(()).unwrap();
         let _ = wrapper.allocator();
     }
 
     #[test]
     fn wrapper_index() {
-        let allocator = Allocator::<1, ()>::new(None);
+        let allocator = Allocator::<1, ()>::default();
         let wrapper = allocator.allocate(()).unwrap();
         assert_eq!(wrapper.index(), 0);
     }
 
     #[test]
     fn wrapper_deref() {
-        let allocator = Allocator::<1, u8>::new(None);
+        let allocator = Allocator::<1, u8>::default();
         let wrapper = allocator.allocate(0).unwrap();
         assert_eq!(*wrapper, 0);
     }
 
     #[test]
     fn wrapper_deref_mut() {
-        let allocator = Allocator::<1, u8>::new(None);
+        let allocator = Allocator::<1, u8>::default();
         let mut wrapper = allocator.allocate(0).unwrap();
         assert_eq!(*wrapper, 0);
         *wrapper = 1;
@@ -1034,11 +1112,18 @@ mod tests {
 
     #[test]
     fn allocator_debug() {
-        assert_eq!(
-            format!("{:?}", Allocator::<0, ()>::new(None)),
-            "Allocator(Mutex { lock: Mutex(UnsafeCell { .. }), data: UnsafeCell { .. } })"
-        );
+        #[cfg(feature = "repr_c")]
+        let expected =
+            "Allocator(Mutex { lock: Mutex(UnsafeCell { .. }), data: UnsafeCell { .. } })";
+
+        #[cfg(not(feature = "repr_c"))]
+        let expected = "Allocator(Mutex { data: InnerAllocator { head: None, data: [] }, \
+                        poisoned: false, .. })";
+
+        assert_eq!(format!("{:?}", Allocator::<0, ()>::default()), expected);
     }
+
+    #[cfg(feature = "repr_c")]
     #[test]
     fn allocator_init() {
         let mut uninit_allocator = std::mem::MaybeUninit::uninit();
@@ -1046,6 +1131,8 @@ mod tests {
             <Allocator<3, u8>>::init(uninit_allocator.as_mut_ptr(), None);
         }
     }
+
+    #[cfg(feature = "repr_c")]
     #[test]
     fn allocator_zero() {
         let mut uninit_allocator = std::mem::MaybeUninit::uninit();
@@ -1057,19 +1144,19 @@ mod tests {
     // `None` head
     #[test]
     fn drop_0() {
-        let memory = Allocator::<1, ()>::new(None);
+        let memory = Allocator::<1, ()>::default();
         memory.allocate(()).unwrap();
     }
     // `head > self.index`
     #[test]
     fn drop_1() {
-        let memory = Allocator::<2, ()>::new(None);
+        let memory = Allocator::<2, ()>::default();
         memory.allocate(()).unwrap();
     }
     // `head < self.index`
     #[test]
     fn drop_2() {
-        let memory = Allocator::<3, ()>::new(None);
+        let memory = Allocator::<3, ()>::default();
         let a = memory.allocate(()).unwrap();
         let b = memory.allocate(()).unwrap();
         drop(a);
@@ -1079,7 +1166,7 @@ mod tests {
     // `head < self.index` and `Some(next) = unsafe { inner_allocator.data[current].empty }`
     #[test]
     fn drop_3() {
-        let memory = Allocator::<4, ()>::new(None);
+        let memory = Allocator::<4, ()>::default();
         let a = memory.allocate(()).unwrap();
         let b = memory.allocate(()).unwrap();
         let c = memory.allocate(()).unwrap();
