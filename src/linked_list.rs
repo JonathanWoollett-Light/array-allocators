@@ -475,8 +475,9 @@ impl<'a, const N: usize> Drop for Wrapper<'a, N> {
             return;
         }
 
-        // let Wrapper
-        let mut inner_allocator = self.allocator.0.lock().unwrap();
+        let mut inner_allocator_guard = self.allocator.0.lock().unwrap();
+        // To avoid a massive number of mutex deref calls we deref here.
+        let inner_allocator = &mut *inner_allocator_guard;
 
         // ┌───┬─────┬───┐
         // │...│index│...│

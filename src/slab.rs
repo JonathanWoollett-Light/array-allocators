@@ -263,7 +263,9 @@ impl<'a, const N: usize, T> Drop for Wrapper<'a, N, T> {
         #[cfg(feature = "log")]
         log::trace!("Wrapper::drop");
 
-        let mut inner_allocator = self.allocator.0.lock().unwrap();
+        let mut inner_allocator_guard = self.allocator.0.lock().unwrap();
+        // To avoid a massive number of mutex deref calls we deref here.
+        let inner_allocator = &mut *inner_allocator_guard;
 
         if let Some(head) = inner_allocator.head {
             debug_assert_ne!(head, self.index);
