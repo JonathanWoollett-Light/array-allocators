@@ -125,7 +125,8 @@ impl<'a, const N: usize, T> Iterator for WrapperIterator<'a, N, T> {
     type Item = Wrapper<'a, N, T>;
 
     fn next(&mut self) -> Option<Self::Item> {
-        let inner = self.allocator.0.lock().unwrap();
+        let inner_guard = self.allocator.0.lock().unwrap();
+        let inner = &*inner_guard;
         loop {
             let free = self.free.unwrap_or(N);
             if self.used < free {

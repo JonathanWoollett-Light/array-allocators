@@ -66,7 +66,8 @@ impl<const N: usize> Allocator<N> {
             });
         }
 
-        let mut allocator = self.0.lock().unwrap();
+        let mut allocator_guard = self.0.lock().unwrap();
+        let allocator = &mut *allocator_guard;
 
         let rtn = if let Some(next) = allocator.head {
             match blocks.cmp(&allocator.data[next].size) {
