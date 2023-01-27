@@ -170,6 +170,42 @@ impl<const N: usize> Allocator<N> {
             __marker: PhantomData,
         })
     }
+
+    /// # Safety
+    ///
+    /// You almost definitely should not use this, it is extremely unsafe and can invalidate all
+    /// memory of the allocator to which this belongs.
+    #[cfg(feature = "repr_c")]
+    pub unsafe fn inner(&self) -> &super::mutex::Mutex<InnerAllocator<N>> {
+        &self.0
+    }
+
+    /// # Safety
+    ///
+    /// You almost definitely should not use this, it is extremely unsafe and can invalidate all
+    /// memory of the allocator to which this belongs.
+    #[cfg(feature = "repr_c")]
+    pub unsafe fn inner_mut(&mut self) -> &mut super::mutex::Mutex<InnerAllocator<N>> {
+        &mut self.0
+    }
+
+    /// # Safety
+    ///
+    /// You almost definitely should not use this, it is extremely unsafe and can invalidate all
+    /// memory of the allocator to which this belongs.
+    #[cfg(not(feature = "repr_c"))]
+    pub unsafe fn inner(&self) -> &std::sync::Mutex<InnerAllocator<N>> {
+        &self.0
+    }
+
+    /// # Safety
+    ///
+    /// You almost definitely should not use this, it is extremely unsafe and can invalidate all
+    /// memory of the allocator to which this belongs.
+    #[cfg(not(feature = "repr_c"))]
+    pub unsafe fn inner_mut(&mut self) -> &mut std::sync::Mutex<InnerAllocator<N>> {
+        &mut self.0
+    }
 }
 
 impl<const N: usize> Default for Allocator<N> {
@@ -186,7 +222,7 @@ impl<const N: usize> Default for Allocator<N> {
 
 #[derive(Debug, Eq, PartialEq)]
 #[cfg_attr(feature = "repr_c", repr(C))]
-struct InnerAllocator<const N: usize> {
+pub struct InnerAllocator<const N: usize> {
     head: Option<usize>,
     data: [Block; N],
 }
