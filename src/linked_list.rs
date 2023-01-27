@@ -132,7 +132,8 @@ impl<const N: usize> Allocator<N> {
             None
         };
 
-        drop(allocator);
+        drop(allocator_guard);
+
         rtn
     }
 
@@ -419,7 +420,7 @@ impl<'a, const N: usize> Deref for Wrapper<'a, N> {
 
     fn deref(&self) -> &Self::Target {
         #[cfg(feature = "log")]
-        log::trace!("Wrapper::deref");
+        log::trace!("Wrapper::deref enter");
 
         // We circumvent acquiring a guard as we don't need to lock to safely dereference allocated
         // memory.
@@ -438,13 +439,18 @@ impl<'a, const N: usize> Deref for Wrapper<'a, N> {
             .unwrap()
         };
 
-        &inner_allocator.data[self.index..self.index + self.size]
+        let slice = &inner_allocator.data[self.index..self.index + self.size];
+
+        #[cfg(feature = "log")]
+        log::trace!("Wrapper::deref exit");
+
+        slice
     }
 }
 impl<'a, const N: usize> DerefMut for Wrapper<'a, N> {
     fn deref_mut(&mut self) -> &mut Self::Target {
         #[cfg(feature = "log")]
-        log::trace!("Wrapper::deref_mut");
+        log::trace!("Wrapper::deref_mut enter");
 
         // We circumvent acquiring a guard as we don't need to lock to safely dereference allocated
         // memory.
@@ -463,14 +469,19 @@ impl<'a, const N: usize> DerefMut for Wrapper<'a, N> {
             .unwrap()
         };
 
-        &mut inner_allocator.data[self.index..self.index + self.size]
+        let slice = &mut inner_allocator.data[self.index..self.index + self.size];
+
+        #[cfg(feature = "log")]
+        log::trace!("Wrapper::deref_mut exit");
+
+        slice
     }
 }
 
 impl<'a, const N: usize> Drop for Wrapper<'a, N> {
     fn drop(&mut self) {
         #[cfg(feature = "log")]
-        log::trace!("Wrapper::drop");
+        log::trace!("Wrapper::drop enter");
 
         if self.size == 0 {
             return;
@@ -632,7 +643,10 @@ impl<'a, const N: usize> Drop for Wrapper<'a, N> {
             };
         }
 
-        drop(inner_allocator);
+        drop(inner_allocator_guard);
+
+        #[cfg(feature = "log")]
+        log::trace!("Wrapper::drop exit");
     }
 }
 
@@ -729,7 +743,7 @@ impl<'a, const N: usize, T> Slice<'a, N, T> {
 
     pub fn resize(&mut self, len: usize) -> Option<()> {
         #[cfg(feature = "log")]
-        log::trace!("Slice::resize");
+        log::trace!("Slice::resize enter");
 
         if self.len() == len {
             return Some(());
@@ -749,6 +763,9 @@ impl<'a, const N: usize, T> Slice<'a, N, T> {
 
         drop(old);
 
+        #[cfg(feature = "log")]
+        log::trace!("Slice::resize exit");
+
         Some(())
     }
 }
@@ -758,22 +775,34 @@ impl<'a, const N: usize, T> Deref for Slice<'a, N, T> {
 
     fn deref(&self) -> &Self::Target {
         #[cfg(feature = "log")]
-        log::trace!("Slice::deref");
+        log::trace!("Slice::deref enter");
 
-        unsafe { &*std::ptr::from_raw_parts(std::ptr::addr_of!(*self.wrapper).cast(), self.len) }
+        let slice = unsafe {
+            &*std::ptr::from_raw_parts(std::ptr::addr_of!(*self.wrapper).cast(), self.len)
+        };
+
+        #[cfg(feature = "log")]
+        log::trace!("Slice::deref exit");
+
+        slice
     }
 }
 impl<'a, const N: usize, T> DerefMut for Slice<'a, N, T> {
     fn deref_mut(&mut self) -> &mut Self::Target {
         #[cfg(feature = "log")]
-        log::trace!("Slice::deref_mut");
+        log::trace!("Slice::deref_mut enter");
 
-        unsafe {
+        let slice = unsafe {
             &mut *std::ptr::from_raw_parts_mut(
                 std::ptr::addr_of_mut!(*self.wrapper).cast(),
                 self.len,
             )
-        }
+        };
+
+        #[cfg(feature = "log")]
+        log::trace!("Slice::deref_mut exit");
+
+        slice
     }
 }
 
