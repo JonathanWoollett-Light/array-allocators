@@ -288,12 +288,52 @@ impl<'a, const N: usize, T> Value<'a, N, T> {
         self.wrapper.index
     }
 
+    /// # Safety
+    ///
+    /// You almost definitely should not use this, it is extremely unsafe and can invalidate all
+    /// memory of the allocator to which this belongs.
+    pub unsafe fn index_mut(&mut self) -> &mut usize {
+        #[cfg(feature = "log")]
+        log::trace!("Value::index_mut");
+
+        &mut self.wrapper.index
+    }
+
     #[must_use]
     pub fn size(&self) -> usize {
         #[cfg(feature = "log")]
         log::trace!("Value::size");
 
         self.wrapper.size
+    }
+
+    /// # Safety
+    ///
+    /// You almost definitely should not use this, it is extremely unsafe and can invalidate all
+    /// memory of the allocator to which this belongs.
+    pub unsafe fn size_mut(&mut self) -> &mut usize {
+        #[cfg(feature = "log")]
+        log::trace!("Value::size_mut");
+
+        &mut self.wrapper.size
+    }
+
+    pub fn wrapper(&self) -> &Wrapper<'a, N> {
+        #[cfg(feature = "log")]
+        log::trace!("Value::wrapper");
+
+        &self.wrapper
+    }
+
+    /// # Safety
+    ///
+    /// You almost definitely should not use this, it is extremely unsafe and can invalidate all
+    /// memory of the allocator to which this belongs.
+    pub unsafe fn wrapper_mut(&mut self) -> &mut Wrapper<'a, N> {
+        #[cfg(feature = "log")]
+        log::trace!("Value::wrapper_mut");
+
+        &mut self.wrapper
     }
 }
 
@@ -341,12 +381,34 @@ impl<'a, const N: usize> Wrapper<'a, N> {
         self.index
     }
 
+    /// # Safety
+    ///
+    /// You almost definitely should not use this, it is extremely unsafe and can invalidate all
+    /// memory of the allocator to which this belongs.
+    pub unsafe fn index_mut(&mut self) -> &mut usize {
+        #[cfg(feature = "log")]
+        log::trace!("Wrapper::index_mut");
+
+        &mut self.index
+    }
+
     #[must_use]
     pub fn size(&self) -> usize {
         #[cfg(feature = "log")]
         log::trace!("Wrapper::size");
 
         self.size
+    }
+
+    /// # Safety
+    ///
+    /// You almost definitely should not use this, it is extremely unsafe and can invalidate all
+    /// memory of the allocator to which this belongs.
+    pub unsafe fn size_mut(&mut self) -> &mut usize {
+        #[cfg(feature = "log")]
+        log::trace!("Wrapper::size_mut");
+
+        &mut self.size
     }
 }
 
@@ -596,6 +658,17 @@ impl<'a, const N: usize, T> Slice<'a, N, T> {
         self.wrapper.index
     }
 
+    /// # Safety
+    ///
+    /// You almost definitely should not use this, it is extremely unsafe and can invalidate all
+    /// memory of the allocator to which this belongs.
+    pub unsafe fn index_mut(&mut self) -> &mut usize {
+        #[cfg(feature = "log")]
+        log::trace!("Slice::index_mut");
+
+        &mut self.wrapper.index
+    }
+
     #[must_use]
     pub fn size(&self) -> usize {
         #[cfg(feature = "log")]
@@ -604,12 +677,43 @@ impl<'a, const N: usize, T> Slice<'a, N, T> {
         self.wrapper.size
     }
 
+    /// # Safety
+    ///
+    /// You almost definitely should not use this, it is extremely unsafe and can invalidate all
+    /// memory of the allocator to which this belongs.
+    pub unsafe fn size_mut(&mut self) -> &mut usize {
+        #[cfg(feature = "log")]
+        log::trace!("Slice::size_mut");
+
+        &mut self.wrapper.size
+    }
+
+    pub fn wrapper(&mut self) -> &Wrapper<'a, N> {
+        &self.wrapper
+    }
+
+    /// # Safety
+    ///
+    /// You almost definitely should not use this, it is extremely unsafe and can invalidate all
+    /// memory of the allocator to which this belongs.
+    pub unsafe fn wrapper_mut(&mut self) -> &mut Wrapper<'a, N> {
+        &mut self.wrapper
+    }
+
     #[must_use]
     pub fn len(&self) -> usize {
         #[cfg(feature = "log")]
         log::trace!("Slice::len");
 
         self.len
+    }
+
+    /// # Safety
+    ///
+    /// You almost definitely should not use this, it is extremely unsafe and can invalidate all
+    /// memory of the allocator to which this belongs.
+    pub unsafe fn len_mut(&mut self) -> &mut usize {
+        &mut self.len
     }
 
     #[must_use]
