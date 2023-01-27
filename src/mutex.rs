@@ -55,7 +55,7 @@ impl<'a, T> std::ops::Deref for MutexGuard<'a, T> {
         #[cfg(feature = "log")]
         log::trace!("Mutex::deref");
 
-        unsafe { &*self.0.data.get() }
+        unsafe { &*(self.0.data.get()) }
     }
 }
 impl<'a, T> std::ops::DerefMut for MutexGuard<'a, T> {
@@ -63,7 +63,7 @@ impl<'a, T> std::ops::DerefMut for MutexGuard<'a, T> {
         #[cfg(feature = "log")]
         log::trace!("Mutex::deref_mut");
 
-        unsafe { &mut *self.0.data.get() }
+        unsafe { &mut *(self.0.data.get()) }
     }
 }
 impl<'a, T> Drop for MutexGuard<'a, T> {
