@@ -318,6 +318,7 @@ impl<'a, const N: usize, T> Value<'a, N, T> {
         &mut self.wrapper.size
     }
 
+    #[must_use]
     pub fn wrapper(&self) -> &Wrapper<'a, N> {
         #[cfg(feature = "log")]
         log::trace!("Value::wrapper");
@@ -423,7 +424,7 @@ impl<'a, const N: usize> Deref for Wrapper<'a, N> {
         // memory.
 
         #[cfg(feature = "repr_c")]
-        let inner_allocator = unsafe { &*self.allocator.0.get() };
+        let inner_allocator = unsafe { &*(self.allocator.0.get()) };
 
         #[cfg(not(feature = "repr_c"))]
         #[allow(mutable_transmutes)]
@@ -448,7 +449,7 @@ impl<'a, const N: usize> DerefMut for Wrapper<'a, N> {
         // memory.
 
         #[cfg(feature = "repr_c")]
-        let inner_allocator = unsafe { &mut *self.allocator.0.get() };
+        let inner_allocator = unsafe { &mut *(self.allocator.0.get()) };
 
         #[cfg(not(feature = "repr_c"))]
         #[allow(mutable_transmutes)]
