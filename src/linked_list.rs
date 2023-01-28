@@ -229,6 +229,40 @@ pub struct InnerAllocator<const N: usize> {
 
 #[cfg(feature = "repr_c")]
 impl<const N: usize> InnerAllocator<N> {
+    /// # Safety
+    ///
+    /// You almost definitely should not use this, it is extremely unsafe and can invalidate all
+    /// memory of the allocator to which this belongs.
+    #[must_use]
+    pub unsafe fn head(&self) -> &Option<usize> {
+        &self.head
+    }
+
+    /// # Safety
+    ///
+    /// You almost definitely should not use this, it is extremely unsafe and can invalidate all
+    /// memory of the allocator to which this belongs.
+    pub unsafe fn head_mut(&mut self) -> &mut Option<usize> {
+        &mut self.head
+    }
+
+    /// # Safety
+    ///
+    /// You almost definitely should not use this, it is extremely unsafe and can invalidate all
+    /// memory of the allocator to which this belongs.
+    #[must_use]
+    pub unsafe fn data(&self) -> &[Block; N] {
+        &self.data
+    }
+
+    /// # Safety
+    ///
+    /// You almost definitely should not use this, it is extremely unsafe and can invalidate all
+    /// memory of the allocator to which this belongs.
+    pub unsafe fn data_mut(&mut self) -> &mut [Block; N] {
+        &mut self.data
+    }
+
     unsafe fn init(ptr: *mut Self) {
         #[cfg(feature = "log")]
         log::trace!("InnerAllocator::init");
