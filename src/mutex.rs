@@ -53,7 +53,7 @@ impl<'a, T> std::ops::Deref for MutexGuard<'a, T> {
 
     fn deref(&self) -> &Self::Target {
         #[cfg(feature = "log")]
-        log::trace!("Mutex::deref");
+        log::trace!("MutexGuard::deref");
 
         unsafe { &*(self.0.data.get()) }
     }
@@ -61,7 +61,7 @@ impl<'a, T> std::ops::Deref for MutexGuard<'a, T> {
 impl<'a, T> std::ops::DerefMut for MutexGuard<'a, T> {
     fn deref_mut(&mut self) -> &mut Self::Target {
         #[cfg(feature = "log")]
-        log::trace!("Mutex::deref_mut");
+        log::trace!("MutexGuard::deref_mut");
 
         unsafe { &mut *(self.0.data.get()) }
     }
@@ -69,7 +69,7 @@ impl<'a, T> std::ops::DerefMut for MutexGuard<'a, T> {
 impl<'a, T> Drop for MutexGuard<'a, T> {
     fn drop(&mut self) {
         #[cfg(feature = "log")]
-        log::trace!("Mutex::drop");
+        log::trace!("MutexGuard::drop");
 
         self.0.lock.unlock().unwrap();
     }

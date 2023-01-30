@@ -3,6 +3,9 @@ use std::marker::PhantomData;
 use std::mem::size_of;
 use std::ops::{Deref, DerefMut, Drop};
 
+#[cfg(feature = "log")]
+use log::trace;
+
 #[cfg(feature = "repr_c")]
 #[derive(Debug)]
 #[repr(C)]
@@ -17,7 +20,7 @@ impl<const N: usize> Allocator<N> {
     #[must_use]
     pub fn new(attr: Option<nix::sys::pthread::MutexAttr>) -> Self {
         #[cfg(feature = "log")]
-        log::trace!("Allocator::new");
+        trace!("Allocator::new");
         Self(super::mutex::Mutex::new(InnerAllocator::default(), attr))
     }
 
@@ -25,7 +28,7 @@ impl<const N: usize> Allocator<N> {
     #[must_use]
     pub fn new() -> Self {
         #[cfg(feature = "log")]
-        log::trace!("Allocator::new");
+        trace!("Allocator::new");
         Self(std::sync::Mutex::new(InnerAllocator::default()))
     }
 
@@ -41,11 +44,11 @@ impl<const N: usize> Allocator<N> {
     #[cfg(feature = "repr_c")]
     pub unsafe fn init(ptr: *mut Self, attr: Option<nix::sys::pthread::MutexAttr>) {
         #[cfg(feature = "log")]
-        log::trace!("Allocator::init");
+        trace!("Allocator::init");
         (*ptr).0.lock = nix::sys::pthread::Mutex::new(attr).unwrap();
 
         #[cfg(feature = "log")]
-        log::trace!("Allocator::init 2");
+        trace!("Allocator::init 2");
         <InnerAllocator<N>>::init((*ptr).0.get());
     }
 
@@ -56,7 +59,7 @@ impl<const N: usize> Allocator<N> {
     /// When locking the mutex fails.
     pub fn allocate(&self, blocks: usize) -> Option<Wrapper<N>> {
         #[cfg(feature = "log")]
-        log::trace!("Allocator::allocate");
+        trace!("Allocator::allocate");
 
         if blocks == 0 {
             return Some(Wrapper {
@@ -139,7 +142,7 @@ impl<const N: usize> Allocator<N> {
 
     pub fn allocate_value<T>(&self) -> Option<Value<N, T>> {
         #[cfg(feature = "log")]
-        log::trace!("Allocator::allocate_value");
+        trace!("Allocator::allocate_value");
         let blocks = size_of::<T>().div_ceil(size_of::<Block>());
         self.allocate(blocks).map(|wrapper| Value {
             wrapper,
@@ -154,7 +157,7 @@ impl<const N: usize> Allocator<N> {
     /// When locking the mutex fails.
     pub fn allocate_slice<T>(&self, len: usize) -> Option<Slice<N, T>> {
         #[cfg(feature = "log")]
-        log::trace!("Allocator::allocate_slice");
+        trace!("Allocator::allocate_slice");
 
         let blocks = (len * size_of::<T>()).div_ceil(size_of::<Block>());
 
@@ -235,6 +238,9 @@ impl<const N: usize> InnerAllocator<N> {
     /// memory of the allocator to which this belongs.
     #[must_use]
     pub unsafe fn head(&self) -> &Option<usize> {
+        #[cfg(feature = "log")]
+        trace!("InnerAllocator::head");
+
         &self.head
     }
 
@@ -243,6 +249,9 @@ impl<const N: usize> InnerAllocator<N> {
     /// You almost definitely should not use this, it is extremely unsafe and can invalidate all
     /// memory of the allocator to which this belongs.
     pub unsafe fn head_mut(&mut self) -> &mut Option<usize> {
+        #[cfg(feature = "log")]
+        trace!("InnerAllocator::head_mut");
+
         &mut self.head
     }
 
@@ -252,6 +261,9 @@ impl<const N: usize> InnerAllocator<N> {
     /// memory of the allocator to which this belongs.
     #[must_use]
     pub unsafe fn data(&self) -> &[Block; N] {
+        #[cfg(feature = "log")]
+        trace!("InnerAllocator::data");
+
         &self.data
     }
 
@@ -260,21 +272,24 @@ impl<const N: usize> InnerAllocator<N> {
     /// You almost definitely should not use this, it is extremely unsafe and can invalidate all
     /// memory of the allocator to which this belongs.
     pub unsafe fn data_mut(&mut self) -> &mut [Block; N] {
+        #[cfg(feature = "log")]
+        trace!("InnerAllocator::data_mut");
+
         &mut self.data
     }
 
     unsafe fn init(ptr: *mut Self) {
         #[cfg(feature = "log")]
-        log::trace!("InnerAllocator::init");
+        trace!("InnerAllocator::init");
 
         if N > 0 {
             #[cfg(feature = "log")]
-            log::trace!("InnerAllocator::init non-empty");
+            trace!("InnerAllocator::init non-empty");
 
             (*ptr).head = Some(0);
 
             #[cfg(feature = "log")]
-            log::trace!("InnerAllocator::init head written");
+            trace!("InnerAllocator::init head written");
 
             let data_ref = &mut (*ptr).data;
             data_ref[0] = Block {
@@ -283,7 +298,7 @@ impl<const N: usize> InnerAllocator<N> {
             };
         } else {
             #[cfg(feature = "log")]
-            log::trace!("InnerAllocator::init empty");
+            trace!("InnerAllocator::init empty");
 
             (*ptr).head = None;
         }
@@ -293,11 +308,11 @@ impl<const N: usize> InnerAllocator<N> {
 impl<const N: usize> Default for InnerAllocator<N> {
     fn default() -> Self {
         #[cfg(feature = "log")]
-        log::trace!("InnerAllocator::default");
+        trace!("InnerAllocator::default");
 
         if N > 0 {
             #[cfg(feature = "log")]
-            log::trace!("InnerAllocator::default non-empty");
+            trace!("InnerAllocator::default non-empty");
 
             let mut data_memory = InnerAllocator {
                 head: Some(0),
@@ -305,7 +320,7 @@ impl<const N: usize> Default for InnerAllocator<N> {
             };
 
             #[cfg(feature = "log")]
-            log::trace!("InnerAllocator::default head written");
+            trace!("InnerAllocator::default head written");
 
             unsafe {
                 std::ptr::write(
@@ -319,7 +334,7 @@ impl<const N: usize> Default for InnerAllocator<N> {
             data_memory
         } else {
             #[cfg(feature = "log")]
-            log::trace!("InnerAllocator::default empty");
+            trace!("InnerAllocator::default empty");
 
             InnerAllocator {
                 head: None,
@@ -347,7 +362,7 @@ impl<'a, const N: usize, T> Value<'a, N, T> {
     #[must_use]
     pub fn allocator(&self) -> &Allocator<N> {
         #[cfg(feature = "log")]
-        log::trace!("Value::allocator");
+        trace!("Value::allocator");
 
         self.wrapper.allocator
     }
@@ -355,7 +370,7 @@ impl<'a, const N: usize, T> Value<'a, N, T> {
     #[must_use]
     pub fn index(&self) -> usize {
         #[cfg(feature = "log")]
-        log::trace!("Value::index");
+        trace!("Value::index");
 
         self.wrapper.index
     }
@@ -366,7 +381,7 @@ impl<'a, const N: usize, T> Value<'a, N, T> {
     /// memory of the allocator to which this belongs.
     pub unsafe fn index_mut(&mut self) -> &mut usize {
         #[cfg(feature = "log")]
-        log::trace!("Value::index_mut");
+        trace!("Value::index_mut");
 
         &mut self.wrapper.index
     }
@@ -374,7 +389,7 @@ impl<'a, const N: usize, T> Value<'a, N, T> {
     #[must_use]
     pub fn size(&self) -> usize {
         #[cfg(feature = "log")]
-        log::trace!("Value::size");
+        trace!("Value::size");
 
         self.wrapper.size
     }
@@ -385,7 +400,7 @@ impl<'a, const N: usize, T> Value<'a, N, T> {
     /// memory of the allocator to which this belongs.
     pub unsafe fn size_mut(&mut self) -> &mut usize {
         #[cfg(feature = "log")]
-        log::trace!("Value::size_mut");
+        trace!("Value::size_mut");
 
         &mut self.wrapper.size
     }
@@ -393,7 +408,7 @@ impl<'a, const N: usize, T> Value<'a, N, T> {
     #[must_use]
     pub fn wrapper(&self) -> &Wrapper<'a, N> {
         #[cfg(feature = "log")]
-        log::trace!("Value::wrapper");
+        trace!("Value::wrapper");
 
         &self.wrapper
     }
@@ -404,7 +419,7 @@ impl<'a, const N: usize, T> Value<'a, N, T> {
     /// memory of the allocator to which this belongs.
     pub unsafe fn wrapper_mut(&mut self) -> &mut Wrapper<'a, N> {
         #[cfg(feature = "log")]
-        log::trace!("Value::wrapper_mut");
+        trace!("Value::wrapper_mut");
 
         &mut self.wrapper
     }
@@ -415,7 +430,7 @@ impl<'a, const N: usize, T> Deref for Value<'a, N, T> {
 
     fn deref(&self) -> &Self::Target {
         #[cfg(feature = "log")]
-        log::trace!("Value::deref");
+        trace!("Value::deref");
 
         unsafe { &*std::ptr::addr_of!(*self.wrapper).cast() }
     }
@@ -423,7 +438,7 @@ impl<'a, const N: usize, T> Deref for Value<'a, N, T> {
 impl<'a, const N: usize, T> DerefMut for Value<'a, N, T> {
     fn deref_mut(&mut self) -> &mut Self::Target {
         #[cfg(feature = "log")]
-        log::trace!("Value::deref_mut");
+        trace!("Value::deref_mut");
 
         unsafe { &mut *std::ptr::addr_of_mut!(*self.wrapper).cast() }
     }
@@ -441,7 +456,7 @@ impl<'a, const N: usize> Wrapper<'a, N> {
     #[must_use]
     pub fn allocator(&self) -> &Allocator<N> {
         #[cfg(feature = "log")]
-        log::trace!("Wrapper::allocator");
+        trace!("Wrapper::allocator");
 
         self.allocator
     }
@@ -449,7 +464,7 @@ impl<'a, const N: usize> Wrapper<'a, N> {
     #[must_use]
     pub fn index(&self) -> usize {
         #[cfg(feature = "log")]
-        log::trace!("Wrapper::index");
+        trace!("Wrapper::index");
 
         self.index
     }
@@ -460,7 +475,7 @@ impl<'a, const N: usize> Wrapper<'a, N> {
     /// memory of the allocator to which this belongs.
     pub unsafe fn index_mut(&mut self) -> &mut usize {
         #[cfg(feature = "log")]
-        log::trace!("Wrapper::index_mut");
+        trace!("Wrapper::index_mut");
 
         &mut self.index
     }
@@ -468,7 +483,7 @@ impl<'a, const N: usize> Wrapper<'a, N> {
     #[must_use]
     pub fn size(&self) -> usize {
         #[cfg(feature = "log")]
-        log::trace!("Wrapper::size");
+        trace!("Wrapper::size");
 
         self.size
     }
@@ -479,7 +494,7 @@ impl<'a, const N: usize> Wrapper<'a, N> {
     /// memory of the allocator to which this belongs.
     pub unsafe fn size_mut(&mut self) -> &mut usize {
         #[cfg(feature = "log")]
-        log::trace!("Wrapper::size_mut");
+        trace!("Wrapper::size_mut");
 
         &mut self.size
     }
@@ -490,7 +505,7 @@ impl<'a, const N: usize> Deref for Wrapper<'a, N> {
 
     fn deref(&self) -> &Self::Target {
         #[cfg(feature = "log")]
-        log::trace!("Wrapper::deref enter");
+        trace!("Wrapper::deref enter");
 
         // We circumvent acquiring a guard as we don't need to lock to safely dereference allocated
         // memory.
@@ -512,7 +527,7 @@ impl<'a, const N: usize> Deref for Wrapper<'a, N> {
         let slice = &inner_allocator.data[self.index..self.index + self.size];
 
         #[cfg(feature = "log")]
-        log::trace!("Wrapper::deref exit");
+        trace!("Wrapper::deref exit");
 
         slice
     }
@@ -520,7 +535,7 @@ impl<'a, const N: usize> Deref for Wrapper<'a, N> {
 impl<'a, const N: usize> DerefMut for Wrapper<'a, N> {
     fn deref_mut(&mut self) -> &mut Self::Target {
         #[cfg(feature = "log")]
-        log::trace!("Wrapper::deref_mut enter");
+        trace!("Wrapper::deref_mut enter");
 
         // We circumvent acquiring a guard as we don't need to lock to safely dereference allocated
         // memory.
@@ -542,7 +557,7 @@ impl<'a, const N: usize> DerefMut for Wrapper<'a, N> {
         let slice = &mut inner_allocator.data[self.index..self.index + self.size];
 
         #[cfg(feature = "log")]
-        log::trace!("Wrapper::deref_mut exit");
+        trace!("Wrapper::deref_mut exit");
 
         slice
     }
@@ -551,7 +566,7 @@ impl<'a, const N: usize> DerefMut for Wrapper<'a, N> {
 impl<'a, const N: usize> Drop for Wrapper<'a, N> {
     fn drop(&mut self) {
         #[cfg(feature = "log")]
-        log::trace!("Wrapper::drop enter");
+        trace!("Wrapper::drop enter");
 
         if self.size == 0 {
             return;
@@ -716,7 +731,7 @@ impl<'a, const N: usize> Drop for Wrapper<'a, N> {
         drop(inner_allocator_guard);
 
         #[cfg(feature = "log")]
-        log::trace!("Wrapper::drop exit");
+        trace!("Wrapper::drop exit");
     }
 }
 
@@ -732,7 +747,7 @@ impl<'a, const N: usize, T> Slice<'a, N, T> {
     #[must_use]
     pub fn allocator(&self) -> &Allocator<N> {
         #[cfg(feature = "log")]
-        log::trace!("Slice::allocator");
+        trace!("Slice::allocator");
 
         self.wrapper.allocator
     }
@@ -740,7 +755,7 @@ impl<'a, const N: usize, T> Slice<'a, N, T> {
     #[must_use]
     pub fn index(&self) -> usize {
         #[cfg(feature = "log")]
-        log::trace!("Slice::index");
+        trace!("Slice::index");
 
         self.wrapper.index
     }
@@ -751,7 +766,7 @@ impl<'a, const N: usize, T> Slice<'a, N, T> {
     /// memory of the allocator to which this belongs.
     pub unsafe fn index_mut(&mut self) -> &mut usize {
         #[cfg(feature = "log")]
-        log::trace!("Slice::index_mut");
+        trace!("Slice::index_mut");
 
         &mut self.wrapper.index
     }
@@ -759,7 +774,7 @@ impl<'a, const N: usize, T> Slice<'a, N, T> {
     #[must_use]
     pub fn size(&self) -> usize {
         #[cfg(feature = "log")]
-        log::trace!("Slice::size");
+        trace!("Slice::size");
 
         self.wrapper.size
     }
@@ -770,7 +785,7 @@ impl<'a, const N: usize, T> Slice<'a, N, T> {
     /// memory of the allocator to which this belongs.
     pub unsafe fn size_mut(&mut self) -> &mut usize {
         #[cfg(feature = "log")]
-        log::trace!("Slice::size_mut");
+        trace!("Slice::size_mut");
 
         &mut self.wrapper.size
     }
@@ -790,7 +805,7 @@ impl<'a, const N: usize, T> Slice<'a, N, T> {
     #[must_use]
     pub fn len(&self) -> usize {
         #[cfg(feature = "log")]
-        log::trace!("Slice::len");
+        trace!("Slice::len");
 
         self.len
     }
@@ -806,14 +821,14 @@ impl<'a, const N: usize, T> Slice<'a, N, T> {
     #[must_use]
     pub fn is_empty(&self) -> bool {
         #[cfg(feature = "log")]
-        log::trace!("Slice::is_empty");
+        trace!("Slice::is_empty");
 
         self.len == 0
     }
 
     pub fn resize(&mut self, len: usize) -> Option<()> {
         #[cfg(feature = "log")]
-        log::trace!("Slice::resize enter");
+        trace!("Slice::resize enter");
 
         if self.len() == len {
             return Some(());
@@ -834,7 +849,7 @@ impl<'a, const N: usize, T> Slice<'a, N, T> {
         drop(old);
 
         #[cfg(feature = "log")]
-        log::trace!("Slice::resize exit");
+        trace!("Slice::resize exit");
 
         Some(())
     }
@@ -845,14 +860,14 @@ impl<'a, const N: usize, T> Deref for Slice<'a, N, T> {
 
     fn deref(&self) -> &Self::Target {
         #[cfg(feature = "log")]
-        log::trace!("Slice::deref enter");
+        trace!("Slice::deref enter");
 
         let slice = unsafe {
             &*std::ptr::from_raw_parts(std::ptr::addr_of!(*self.wrapper).cast(), self.len)
         };
 
         #[cfg(feature = "log")]
-        log::trace!("Slice::deref exit");
+        trace!("Slice::deref exit");
 
         slice
     }
@@ -860,7 +875,7 @@ impl<'a, const N: usize, T> Deref for Slice<'a, N, T> {
 impl<'a, const N: usize, T> DerefMut for Slice<'a, N, T> {
     fn deref_mut(&mut self) -> &mut Self::Target {
         #[cfg(feature = "log")]
-        log::trace!("Slice::deref_mut enter");
+        trace!("Slice::deref_mut enter");
 
         let slice = unsafe {
             &mut *std::ptr::from_raw_parts_mut(
@@ -870,7 +885,7 @@ impl<'a, const N: usize, T> DerefMut for Slice<'a, N, T> {
         };
 
         #[cfg(feature = "log")]
-        log::trace!("Slice::deref_mut exit");
+        trace!("Slice::deref_mut exit");
 
         slice
     }
