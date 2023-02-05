@@ -832,22 +832,24 @@ impl<'a, const N: usize, T> Slice<'a, N, T> {
         #[cfg(feature = "log")]
         trace!("Slice::resize enter");
 
+        // If resizing to current size, we can do nothing.
         if self.len() == len {
             return Some(());
         }
 
+        // Allocate new slice.
         let mut new = self.wrapper.allocator.allocate_slice(len)?;
 
+        // Copy data to new allocation
+        let from = self[..].as_ptr();
+        let to = new[..].as_mut_ptr();
+        let n = std::cmp::min(len, self.len);
         unsafe {
-            std::ptr::copy(
-                self.as_ptr(),
-                new.as_mut_ptr(),
-                std::cmp::min(len, self.len),
-            );
+            std::ptr::copy(from, to, n);
         }
 
+        // Update wrapper
         let old = std::mem::replace(self, new);
-
         drop(old);
 
         #[cfg(feature = "log")]
