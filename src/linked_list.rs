@@ -432,7 +432,8 @@ impl<'a, const N: usize, T> Deref for Value<'a, N, T> {
         #[cfg(feature = "log")]
         trace!("Value::deref");
 
-        unsafe { &*std::ptr::addr_of!(*self.wrapper).cast() }
+        // TODO Test this deref is to the correct ptr
+        unsafe { &*self.wrapper[..].as_ptr().cast() }
     }
 }
 impl<'a, const N: usize, T> DerefMut for Value<'a, N, T> {
@@ -440,7 +441,8 @@ impl<'a, const N: usize, T> DerefMut for Value<'a, N, T> {
         #[cfg(feature = "log")]
         trace!("Value::deref_mut");
 
-        unsafe { &mut *std::ptr::addr_of_mut!(*self.wrapper).cast() }
+        // TODO Test this deref is to the correct ptr
+        unsafe { &mut *self.wrapper[..].as_mut_ptr().cast() }
     }
 }
 
@@ -862,9 +864,9 @@ impl<'a, const N: usize, T> Deref for Slice<'a, N, T> {
         #[cfg(feature = "log")]
         trace!("Slice::deref enter");
 
-        let slice = unsafe {
-            &*std::ptr::from_raw_parts(std::ptr::addr_of!(*self.wrapper).cast(), self.len)
-        };
+        // TODO Test this deref is to the correct ptr
+        let slice =
+            unsafe { &*std::ptr::from_raw_parts(self.wrapper[..].as_ptr().cast(), self.len) };
 
         #[cfg(feature = "log")]
         trace!("Slice::deref exit");
@@ -877,11 +879,9 @@ impl<'a, const N: usize, T> DerefMut for Slice<'a, N, T> {
         #[cfg(feature = "log")]
         trace!("Slice::deref_mut enter");
 
+        // TODO Test this deref is to the correct ptr
         let slice = unsafe {
-            &mut *std::ptr::from_raw_parts_mut(
-                std::ptr::addr_of_mut!(*self.wrapper).cast(),
-                self.len,
-            )
+            &mut *std::ptr::from_raw_parts_mut(self.wrapper[..].as_mut_ptr().cast(), self.len)
         };
 
         #[cfg(feature = "log")]
