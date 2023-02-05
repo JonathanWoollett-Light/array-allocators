@@ -367,6 +367,17 @@ impl<'a, const N: usize, T> Value<'a, N, T> {
         self.wrapper.allocator
     }
 
+    /// # Safety
+    ///
+    /// You almost definitely should not use this, it is extremely unsafe and can invalidate all
+    /// memory of the allocator to which this belongs.
+    pub unsafe fn allocator_mut(&mut self) -> &mut &'a Allocator<N> {
+        #[cfg(feature = "log")]
+        trace!("Slice::allocator_mut");
+
+        &mut self.wrapper.allocator
+    }
+
     #[must_use]
     pub fn index(&self) -> usize {
         #[cfg(feature = "log")]
@@ -763,6 +774,17 @@ impl<'a, const N: usize, T> Slice<'a, N, T> {
         trace!("Slice::allocator");
 
         self.wrapper.allocator
+    }
+
+    /// # Safety
+    ///
+    /// You almost definitely should not use this, it is extremely unsafe and can invalidate all
+    /// memory of the allocator to which this belongs.
+    pub unsafe fn allocator_mut(&mut self) -> &mut &'a Allocator<N> {
+        #[cfg(feature = "log")]
+        trace!("Slice::allocator_mut");
+
+        &mut self.wrapper.allocator
     }
 
     #[must_use]
