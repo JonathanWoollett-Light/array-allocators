@@ -1,6 +1,9 @@
 use std::mem::ManuallyDrop;
 use std::ops::Drop;
 
+#[cfg(feature = "log")]
+use log::trace;
+
 #[cfg(feature = "repr_c")]
 #[derive(Debug)]
 #[repr(C)]
@@ -15,7 +18,7 @@ impl<const N: usize, T> Allocator<N, T> {
     #[must_use]
     pub fn new(attr: Option<nix::sys::pthread::MutexAttr>) -> Self {
         #[cfg(feature = "log")]
-        log::trace!("Allocator::new");
+        trace!("Allocator::new");
 
         Self(crate::mutex::Mutex::new(InnerAllocator::default(), attr))
     }
@@ -24,7 +27,7 @@ impl<const N: usize, T> Allocator<N, T> {
     #[must_use]
     pub fn new() -> Self {
         #[cfg(feature = "log")]
-        log::trace!("Allocator::new");
+        trace!("Allocator::new");
 
         Self(std::sync::Mutex::new(InnerAllocator::default()))
     }
@@ -41,12 +44,12 @@ impl<const N: usize, T> Allocator<N, T> {
     #[cfg(feature = "repr_c")]
     pub unsafe fn init(ptr: *mut Self, attr: Option<nix::sys::pthread::MutexAttr>) {
         #[cfg(feature = "log")]
-        log::trace!("Allocator::init");
+        trace!("Allocator::init");
 
         (*ptr).0.lock = nix::sys::pthread::Mutex::new(attr).unwrap();
 
         #[cfg(feature = "log")]
-        log::trace!("Allocator::init 2");
+        trace!("Allocator::init 2");
 
         <InnerAllocator<N, T>>::init((*ptr).0.get());
     }
@@ -58,7 +61,7 @@ impl<const N: usize, T> Allocator<N, T> {
     /// When locking the mutex fails.
     pub fn allocate(&self, x: T) -> Option<Wrapper<N, T>> {
         #[cfg(feature = "log")]
-        log::trace!("Allocator::allocate");
+        trace!("Allocator::allocate");
         let mut inner_allocator = self.0.lock().unwrap();
         if let Some(head) = inner_allocator.head {
             let index = head;
@@ -93,7 +96,7 @@ impl<const N: usize, T> Allocator<N, T> {
     /// When locking the mutex fails.
     pub unsafe fn iter(&self) -> WrapperIterator<N, T> {
         #[cfg(feature = "log")]
-        log::trace!("Allocator::iter");
+        trace!("Allocator::iter");
         let head = self.0.lock().unwrap().head;
         WrapperIterator {
             allocator: self,
@@ -159,16 +162,16 @@ pub struct InnerAllocator<const N: usize, T> {
 impl<const N: usize, T> InnerAllocator<N, T> {
     unsafe fn init(ptr: *mut Self) {
         #[cfg(feature = "log")]
-        log::trace!("InnerAllocator::init");
+        trace!("InnerAllocator::init");
 
         if N > 0 {
             #[cfg(feature = "log")]
-            log::trace!("InnerAllocator::init non-empty");
+            trace!("InnerAllocator::init non-empty");
 
             (*ptr).head = Some(0);
 
             #[cfg(feature = "log")]
-            log::trace!("InnerAllocator::init head written");
+            trace!("InnerAllocator::init head written");
 
             let data_ref = &mut (*ptr).data;
             for i in 0..(N - 1) {
@@ -177,7 +180,7 @@ impl<const N: usize, T> InnerAllocator<N, T> {
             data_ref[N - 1] = Block { empty: None };
         } else {
             #[cfg(feature = "log")]
-            log::trace!("InnerAllocator::init empty");
+            trace!("InnerAllocator::init empty");
 
             (*ptr).head = None;
         }
@@ -188,11 +191,11 @@ impl<const N: usize, T> InnerAllocator<N, T> {
 impl<const N: usize, T> Default for InnerAllocator<N, T> {
     fn default() -> Self {
         #[cfg(feature = "log")]
-        log::trace!("InnerAllocator::default");
+        trace!("InnerAllocator::default");
 
         if N > 0 {
             #[cfg(feature = "log")]
-            log::trace!("InnerAllocator::default non-empty");
+            trace!("InnerAllocator::default non-empty");
 
             let mut data: [Block<T>; N] = unsafe { std::mem::zeroed() };
             for i in 0..(N - 1) {
@@ -206,7 +209,7 @@ impl<const N: usize, T> Default for InnerAllocator<N, T> {
             }
         } else {
             #[cfg(feature = "log")]
-            log::trace!("InnerAllocator::default empty");
+            trace!("InnerAllocator::default empty");
 
             Self {
                 head: None,
@@ -225,7 +228,7 @@ union Block<T> {
 impl<T: std::fmt::Debug> std::fmt::Debug for Block<T> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         #[cfg(feature = "log")]
-        log::trace!("Block::fmt");
+        trace!("Block::fmt");
 
         f.debug_struct("Block")
             .field("empty", unsafe { &self.empty })
@@ -245,24 +248,46 @@ impl<'a, const N: usize, T> Wrapper<'a, N, T> {
     #[must_use]
     pub fn allocator(&self) -> &Allocator<N, T> {
         #[cfg(feature = "log")]
-        log::trace!("Wrapper::allocator");
+        trace!("Wrapper::allocator");
 
         self.allocator
+    }
+
+    /// # Safety
+    ///
+    /// You almost definitely should not use this, it is extremely unsafe and can invalidate all
+    /// memory of the allocator to which this belongs.
+    pub unsafe fn allocator_mut(&mut self) -> &mut &'a Allocator<N, T> {
+        #[cfg(feature = "log")]
+        trace!("Wrapper::allocator_mut");
+
+        &mut self.allocator
     }
 
     #[must_use]
     pub fn index(&self) -> usize {
         #[cfg(feature = "log")]
-        log::trace!("Wrapper::index");
+        trace!("Wrapper::index");
 
         self.index
+    }
+
+    /// # Safety
+    ///
+    /// You almost definitely should not use this, it is extremely unsafe and can invalidate all
+    /// memory of the allocator to which this belongs.
+    pub unsafe fn index_mut(&mut self) -> &mut usize {
+        #[cfg(feature = "log")]
+        trace!("Wrapper::index_mut");
+
+        &mut self.index
     }
 }
 
 impl<'a, const N: usize, T> Drop for Wrapper<'a, N, T> {
     fn drop(&mut self) {
         #[cfg(feature = "log")]
-        log::trace!("Wrapper::drop");
+        trace!("Wrapper::drop");
 
         let mut inner_allocator_guard = self.allocator.0.lock().unwrap();
         // To avoid a massive number of mutex deref calls we deref here.
@@ -320,7 +345,7 @@ impl<'a, const N: usize, T> std::ops::Deref for Wrapper<'a, N, T> {
 
     fn deref(&self) -> &Self::Target {
         #[cfg(feature = "log")]
-        log::trace!("Wrapper::deref");
+        trace!("Wrapper::deref");
 
         // We circumvent acquiring a guard as we don't need to lock to safely dereference allocated
         // memory.
@@ -345,7 +370,7 @@ impl<'a, const N: usize, T> std::ops::Deref for Wrapper<'a, N, T> {
 impl<'a, const N: usize, T> std::ops::DerefMut for Wrapper<'a, N, T> {
     fn deref_mut(&mut self) -> &mut Self::Target {
         #[cfg(feature = "log")]
-        log::trace!("Wrapper::deref_mut");
+        trace!("Wrapper::deref_mut");
 
         // We circumvent acquiring a guard as we don't need to lock to safely dereference allocated
         // memory.

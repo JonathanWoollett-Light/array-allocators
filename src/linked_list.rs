@@ -463,6 +463,17 @@ impl<'a, const N: usize> Wrapper<'a, N> {
         self.allocator
     }
 
+    /// # Safety
+    ///
+    /// You almost definitely should not use this, it is extremely unsafe and can invalidate all
+    /// memory of the allocator to which this belongs.
+    pub unsafe fn allocator_mut(&mut self) -> &mut &'a Allocator<N> {
+        #[cfg(feature = "log")]
+        trace!("Wrapper::allocator_mut");
+
+        &mut self.allocator
+    }
+
     #[must_use]
     pub fn index(&self) -> usize {
         #[cfg(feature = "log")]
@@ -1110,6 +1121,23 @@ mod tests {
         let allocator = Allocator::<1>::default();
         let wrapper = allocator.allocate(1).unwrap();
         let _ = wrapper.allocator();
+    }
+    #[test]
+    fn wrapper_allocator_mut() {
+        let allocator_one = Allocator::<1>::default();
+        let allocator_two = Allocator::<1>::default();
+        let mut wrapper = allocator_one.allocate(1).unwrap();
+        assert_eq!(
+            wrapper.allocator() as *const Allocator::<1> as usize,
+            &allocator_one as *const Allocator::<1> as usize
+        );
+        unsafe {
+            *wrapper.allocator_mut() = &allocator_two;
+        }
+        assert_eq!(
+            wrapper.allocator() as *const Allocator::<1> as usize,
+            &allocator_two as *const Allocator::<1> as usize
+        );
     }
     #[test]
     fn wrapper_index() {
