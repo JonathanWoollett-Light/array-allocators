@@ -11,7 +11,7 @@ pub struct ArrayAllocator<const N: usize, T> {
     allocator: Allocator<T>,
     data: [Block<T>; N],
 }
-impl<const N: usize, T: std::fmt::Debug> ArrayAllocator<N, T> {
+impl<const N: usize, T> ArrayAllocator<N, T> {
     pub fn allocator(&self) -> &Allocator<T> {
         &self.allocator
     }
@@ -33,14 +33,14 @@ impl<const N: usize, T: std::fmt::Debug> ArrayAllocator<N, T> {
     }
 }
 
-impl<const N: usize, T: std::fmt::Debug> Deref for ArrayAllocator<N, T> {
+impl<const N: usize, T> Deref for ArrayAllocator<N, T> {
     type Target = Allocator<T>;
 
     fn deref(&self) -> &Self::Target {
         &self.allocator
     }
 }
-impl<const N: usize, T: std::fmt::Debug> DerefMut for ArrayAllocator<N, T> {
+impl<const N: usize, T> DerefMut for ArrayAllocator<N, T> {
     fn deref_mut(&mut self) -> &mut Self::Target {
         &mut self.allocator
     }
@@ -50,7 +50,7 @@ impl<const N: usize, T: std::fmt::Debug> DerefMut for ArrayAllocator<N, T> {
 #[repr(C)]
 pub struct Allocator<T>(crate::mutex::Mutex<InnerAllocator<T>>);
 
-impl<T: std::fmt::Debug> Allocator<T> {
+impl<T> Allocator<T> {
     /// Initializes `Self` at `ptr`.
     ///
     /// # Safety
@@ -133,7 +133,7 @@ pub struct WrapperIterator<'a, T> {
     free: Option<usize>,
     used: usize,
 }
-impl<'a, T: std::fmt::Debug> WrapperIterator<'a, T> {
+impl<'a, T> WrapperIterator<'a, T> {
     #[must_use]
     pub fn allocator(&self) -> &'a Allocator<T> {
         self.allocator
@@ -149,7 +149,7 @@ impl<'a, T: std::fmt::Debug> WrapperIterator<'a, T> {
         &self.used
     }
 }
-impl<'a, T: std::fmt::Debug> Iterator for WrapperIterator<'a, T> {
+impl<'a, T> Iterator for WrapperIterator<'a, T> {
     type Item = Wrapper<'a, T>;
 
     fn next(&mut self) -> Option<Self::Item> {
@@ -200,7 +200,7 @@ pub struct InnerAllocator<T> {
 use std::ptr::NonNull;
 
 #[allow(clippy::needless_range_loop)]
-impl<T: std::fmt::Debug> InnerAllocator<T> {
+impl<T> InnerAllocator<T> {
     /// # Safety
     ///
     /// You almost definitely should not use this, it is extremely unsafe and can invalidate all
@@ -270,12 +270,12 @@ impl<T: std::fmt::Debug> std::fmt::Debug for Block<T> {
 
 #[derive(Debug)]
 #[repr(C)]
-pub struct Wrapper<'a, T: std::fmt::Debug> {
+pub struct Wrapper<'a, T> {
     allocator: &'a Allocator<T>,
     index: usize,
 }
 
-impl<'a, T: std::fmt::Debug> Wrapper<'a, T> {
+impl<'a, T> Wrapper<'a, T> {
     #[must_use]
     pub fn allocator(&self) -> &Allocator<T> {
         #[cfg(feature = "log")]
@@ -315,7 +315,7 @@ impl<'a, T: std::fmt::Debug> Wrapper<'a, T> {
     }
 }
 
-impl<'a, T: std::fmt::Debug> Drop for Wrapper<'a, T> {
+impl<'a, T> Drop for Wrapper<'a, T> {
     fn drop(&mut self) {
         #[cfg(feature = "log")]
         trace!("Wrapper::drop");
@@ -372,7 +372,7 @@ impl<'a, T: std::fmt::Debug> Drop for Wrapper<'a, T> {
     }
 }
 
-impl<'a, T: std::fmt::Debug> Deref for Wrapper<'a, T> {
+impl<'a, T> Deref for Wrapper<'a, T> {
     type Target = T;
 
     fn deref(&self) -> &Self::Target {
@@ -387,7 +387,7 @@ impl<'a, T: std::fmt::Debug> Deref for Wrapper<'a, T> {
         unsafe { &inner_allocator.data().as_ref()[self.index].full }
     }
 }
-impl<'a, T: std::fmt::Debug> DerefMut for Wrapper<'a, T> {
+impl<'a, T> DerefMut for Wrapper<'a, T> {
     fn deref_mut(&mut self) -> &mut Self::Target {
         #[cfg(feature = "log")]
         trace!("Wrapper::deref_mut");
