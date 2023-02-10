@@ -2,36 +2,49 @@ use std::cmp::Ordering;
 use std::marker::PhantomData;
 use std::mem::size_of;
 use std::ops::{Deref, DerefMut, Drop};
+use std::ptr::NonNull;
 
 #[cfg(feature = "log")]
 use log::trace;
 
-#[cfg(feature = "repr_c")]
 #[derive(Debug)]
 #[repr(C)]
-pub struct Allocator<const N: usize>(super::mutex::Mutex<InnerAllocator<N>>);
-
-#[cfg(not(feature = "repr_c"))]
-#[derive(Debug)]
-pub struct Allocator<const N: usize>(std::sync::Mutex<InnerAllocator<N>>);
-
-impl<const N: usize> Allocator<N> {
-    #[cfg(feature = "repr_c")]
+pub struct ArrayAllocator<const N: usize> {
+    allocator: Allocator,
+    data: [Block; N],
+}
+impl<const N: usize> ArrayAllocator<N> {
     #[must_use]
     pub fn new(attr: Option<nix::sys::pthread::MutexAttr>) -> Self {
         #[cfg(feature = "log")]
-        trace!("Allocator::new");
-        Self(super::mutex::Mutex::new(InnerAllocator::default(), attr))
-    }
+        trace!("ArrayAllocator::new");
 
-    #[cfg(not(feature = "repr_c"))]
-    #[must_use]
-    pub fn new() -> Self {
-        #[cfg(feature = "log")]
-        trace!("Allocator::new");
-        Self(std::sync::Mutex::new(InnerAllocator::default()))
+        let mut this: Self = unsafe { std::mem::zeroed() };
+        unsafe {
+            Allocator::init(&mut this.allocator, attr, N);
+        }
+        this
     }
+}
 
+impl<const N: usize> Deref for ArrayAllocator<N> {
+    type Target = Allocator;
+
+    fn deref(&self) -> &Self::Target {
+        &self.allocator
+    }
+}
+impl<const N: usize> DerefMut for ArrayAllocator<N> {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        &mut self.allocator
+    }
+}
+
+#[derive(Debug)]
+#[repr(C)]
+pub struct Allocator(super::mutex::Mutex<InnerAllocator>);
+
+impl Allocator {
     /// Initializes `Self` at `ptr`.
     ///
     /// # Safety
@@ -41,15 +54,15 @@ impl<const N: usize> Allocator<N> {
     /// # Panics
     ///
     /// When failing to initialize the inner mutex.
-    #[cfg(feature = "repr_c")]
-    pub unsafe fn init(ptr: *mut Self, attr: Option<nix::sys::pthread::MutexAttr>) {
+
+    pub unsafe fn init(ptr: *mut Self, attr: Option<nix::sys::pthread::MutexAttr>, n: usize) {
         #[cfg(feature = "log")]
         trace!("Allocator::init");
         (*ptr).0.lock = nix::sys::pthread::Mutex::new(attr).unwrap();
 
         #[cfg(feature = "log")]
         trace!("Allocator::init 2");
-        <InnerAllocator<N>>::init((*ptr).0.get());
+        <InnerAllocator>::init((*ptr).0.get(), n);
     }
 
     /// Allocates a given number of blocks.
@@ -57,7 +70,7 @@ impl<const N: usize> Allocator<N> {
     /// # Panics
     ///
     /// When locking the mutex fails.
-    pub fn allocate(&self, blocks: usize) -> Option<Wrapper<N>> {
+    pub fn allocate(&self, blocks: usize) -> Option<Wrapper> {
         #[cfg(feature = "log")]
         trace!("Allocator::allocate");
 
@@ -71,11 +84,12 @@ impl<const N: usize> Allocator<N> {
 
         let mut allocator_guard = self.0.lock().unwrap();
         let allocator = &mut *allocator_guard;
+        let data = unsafe { allocator.data().as_mut() };
 
         let rtn = if let Some(next) = allocator.head {
-            match blocks.cmp(&allocator.data[next].size) {
+            match blocks.cmp(&data[next].size) {
                 Ordering::Equal => {
-                    allocator.head = allocator.data[next].next;
+                    allocator.head = data[next].next;
                     Some(Wrapper {
                         allocator: self,
                         index: next,
@@ -84,9 +98,9 @@ impl<const N: usize> Allocator<N> {
                 }
                 Ordering::Less => {
                     let new_index = next + blocks;
-                    allocator.data[new_index] = Block {
-                        size: allocator.data[next].size - blocks,
-                        next: allocator.data[next].next,
+                    data[new_index] = Block {
+                        size: data[next].size - blocks,
+                        next: data[next].next,
                     };
                     allocator.head = Some(new_index);
                     Some(Wrapper {
@@ -96,12 +110,12 @@ impl<const N: usize> Allocator<N> {
                     })
                 }
                 Ordering::Greater => {
-                    let mut next_opt = allocator.data[next].next;
+                    let mut next_opt = data[next].next;
                     loop {
                         if let Some(next) = next_opt {
-                            match blocks.cmp(&allocator.data[next].size) {
+                            match blocks.cmp(&data[next].size) {
                                 Ordering::Equal => {
-                                    allocator.head = allocator.data[next].next;
+                                    allocator.head = data[next].next;
                                     break Some(Wrapper {
                                         allocator: self,
                                         index: next,
@@ -110,9 +124,9 @@ impl<const N: usize> Allocator<N> {
                                 }
                                 Ordering::Less => {
                                     let new_index = next + blocks;
-                                    allocator.data[new_index] = Block {
-                                        size: allocator.data[next].size - blocks,
-                                        next: allocator.data[next].next,
+                                    data[new_index] = Block {
+                                        size: data[next].size - blocks,
+                                        next: data[next].next,
                                     };
                                     allocator.head = Some(new_index);
                                     break Some(Wrapper {
@@ -122,7 +136,7 @@ impl<const N: usize> Allocator<N> {
                                     });
                                 }
                                 Ordering::Greater => {
-                                    next_opt = allocator.data[next].next;
+                                    next_opt = data[next].next;
                                 }
                             }
                         } else {
@@ -140,7 +154,7 @@ impl<const N: usize> Allocator<N> {
         rtn
     }
 
-    pub fn allocate_value<T>(&self) -> Option<Value<N, T>> {
+    pub fn allocate_value<T>(&self) -> Option<Value<T>> {
         #[cfg(feature = "log")]
         trace!("Allocator::allocate_value");
         let blocks = size_of::<T>().div_ceil(size_of::<Block>());
@@ -155,7 +169,7 @@ impl<const N: usize> Allocator<N> {
     /// # Panics
     ///
     /// When locking the mutex fails.
-    pub fn allocate_slice<T>(&self, len: usize) -> Option<Slice<N, T>> {
+    pub fn allocate_slice<T>(&self, len: usize) -> Option<Slice<T>> {
         #[cfg(feature = "log")]
         trace!("Allocator::allocate_slice");
 
@@ -178,8 +192,8 @@ impl<const N: usize> Allocator<N> {
     ///
     /// You almost definitely should not use this, it is extremely unsafe and can invalidate all
     /// memory of the allocator to which this belongs.
-    #[cfg(feature = "repr_c")]
-    pub unsafe fn inner(&self) -> &super::mutex::Mutex<InnerAllocator<N>> {
+
+    pub unsafe fn inner(&self) -> &super::mutex::Mutex<InnerAllocator> {
         &self.0
     }
 
@@ -187,51 +201,20 @@ impl<const N: usize> Allocator<N> {
     ///
     /// You almost definitely should not use this, it is extremely unsafe and can invalidate all
     /// memory of the allocator to which this belongs.
-    #[cfg(feature = "repr_c")]
-    pub unsafe fn inner_mut(&mut self) -> &mut super::mutex::Mutex<InnerAllocator<N>> {
+
+    pub unsafe fn inner_mut(&mut self) -> &mut super::mutex::Mutex<InnerAllocator> {
         &mut self.0
-    }
-
-    /// # Safety
-    ///
-    /// You almost definitely should not use this, it is extremely unsafe and can invalidate all
-    /// memory of the allocator to which this belongs.
-    #[cfg(not(feature = "repr_c"))]
-    pub unsafe fn inner(&self) -> &std::sync::Mutex<InnerAllocator<N>> {
-        &self.0
-    }
-
-    /// # Safety
-    ///
-    /// You almost definitely should not use this, it is extremely unsafe and can invalidate all
-    /// memory of the allocator to which this belongs.
-    #[cfg(not(feature = "repr_c"))]
-    pub unsafe fn inner_mut(&mut self) -> &mut std::sync::Mutex<InnerAllocator<N>> {
-        &mut self.0
-    }
-}
-
-impl<const N: usize> Default for Allocator<N> {
-    fn default() -> Self {
-        #[cfg(feature = "repr_c")]
-        let rtn = Self::new(None);
-
-        #[cfg(not(feature = "repr_c"))]
-        let rtn = Self::new();
-
-        rtn
     }
 }
 
 #[derive(Debug, Eq, PartialEq)]
-#[cfg_attr(feature = "repr_c", repr(C))]
-pub struct InnerAllocator<const N: usize> {
+#[repr(C)]
+pub struct InnerAllocator {
     head: Option<usize>,
-    data: [Block; N],
+    size: usize,
 }
 
-#[cfg(feature = "repr_c")]
-impl<const N: usize> InnerAllocator<N> {
+impl InnerAllocator {
     /// # Safety
     ///
     /// You almost definitely should not use this, it is extremely unsafe and can invalidate all
@@ -259,108 +242,69 @@ impl<const N: usize> InnerAllocator<N> {
     ///
     /// You almost definitely should not use this, it is extremely unsafe and can invalidate all
     /// memory of the allocator to which this belongs.
+    ///
+    /// # Panics
+    ///
+    /// When `&self == std::ptr::null()`.
     #[must_use]
-    pub unsafe fn data(&self) -> &[Block; N] {
+    pub unsafe fn data(&mut self) -> NonNull<[Block]> {
         #[cfg(feature = "log")]
         trace!("InnerAllocator::data");
 
-        &self.data
+        std::ptr::NonNull::slice_from_raw_parts(
+            NonNull::new((self as *mut Self).add(1).cast()).unwrap(),
+            self.size,
+        )
     }
 
-    /// # Safety
-    ///
-    /// You almost definitely should not use this, it is extremely unsafe and can invalidate all
-    /// memory of the allocator to which this belongs.
-    pub unsafe fn data_mut(&mut self) -> &mut [Block; N] {
-        #[cfg(feature = "log")]
-        trace!("InnerAllocator::data_mut");
-
-        &mut self.data
-    }
-
-    unsafe fn init(ptr: *mut Self) {
+    unsafe fn init(ptr: *mut Self, n: usize) {
         #[cfg(feature = "log")]
         trace!("InnerAllocator::init");
 
-        if N > 0 {
+        if n > 0 {
             #[cfg(feature = "log")]
             trace!("InnerAllocator::init non-empty");
 
             (*ptr).head = Some(0);
+            (*ptr).size = n;
 
             #[cfg(feature = "log")]
             trace!("InnerAllocator::init head written");
 
-            let data_ref = &mut (*ptr).data;
-            data_ref[0] = Block {
-                size: N,
-                next: None,
-            };
+            std::ptr::write(
+                ptr.add(1).cast(),
+                Block {
+                    size: n,
+                    next: None,
+                },
+            );
         } else {
             #[cfg(feature = "log")]
             trace!("InnerAllocator::init empty");
 
             (*ptr).head = None;
-        }
-    }
-}
-
-impl<const N: usize> Default for InnerAllocator<N> {
-    fn default() -> Self {
-        #[cfg(feature = "log")]
-        trace!("InnerAllocator::default");
-
-        if N > 0 {
-            #[cfg(feature = "log")]
-            trace!("InnerAllocator::default non-empty");
-
-            let mut data_memory = InnerAllocator {
-                head: Some(0),
-                data: unsafe { std::mem::zeroed() },
-            };
-
-            #[cfg(feature = "log")]
-            trace!("InnerAllocator::default head written");
-
-            unsafe {
-                std::ptr::write(
-                    &mut data_memory.data[0],
-                    Block {
-                        size: N,
-                        next: None,
-                    },
-                );
-            }
-            data_memory
-        } else {
-            #[cfg(feature = "log")]
-            trace!("InnerAllocator::default empty");
-
-            InnerAllocator {
-                head: None,
-                data: unsafe { std::mem::zeroed() },
-            }
+            (*ptr).size = 0;
         }
     }
 }
 
 #[derive(Debug, Eq, PartialEq)]
-#[cfg_attr(feature = "repr_c", repr(C))]
+#[repr(C)]
 pub struct Block {
     size: usize,
     next: Option<usize>,
 }
 
 #[derive(Debug)]
-#[cfg_attr(feature = "repr_c", repr(C))]
-pub struct Value<'a, const N: usize, T> {
-    pub wrapper: Wrapper<'a, N>,
+#[repr(C)]
+pub struct Value<'a, T> {
+    pub wrapper: Wrapper<'a>,
     __marker: PhantomData<T>,
 }
 
-impl<'a, const N: usize, T> Value<'a, N, T> {
+impl<'a, T> Value<'a, T> {
     #[must_use]
-    pub fn allocator(&self) -> &Allocator<N> {
+    pub fn allocator(&self) -> &Allocator {
         #[cfg(feature = "log")]
         trace!("Value::allocator");
 
@@ -371,7 +315,7 @@ impl<'a, const N: usize, T> Value<'a, N, T> {
     ///
     /// You almost definitely should not use this, it is extremely unsafe and can invalidate all
     /// memory of the allocator to which this belongs.
-    pub unsafe fn allocator_mut(&mut self) -> &mut &'a Allocator<N> {
+    pub unsafe fn allocator_mut(&mut self) -> &mut &'a Allocator {
         #[cfg(feature = "log")]
         trace!("Slice::allocator_mut");
 
@@ -417,7 +361,7 @@ impl<'a, const N: usize, T> Value<'a, N, T> {
     }
 
     #[must_use]
-    pub fn wrapper(&self) -> &Wrapper<'a, N> {
+    pub fn wrapper(&self) -> &Wrapper<'a> {
         #[cfg(feature = "log")]
         trace!("Value::wrapper");
 
@@ -428,7 +372,7 @@ impl<'a, const N: usize, T> Value<'a, N, T> {
     ///
     /// You almost definitely should not use this, it is extremely unsafe and can invalidate all
     /// memory of the allocator to which this belongs.
-    pub unsafe fn wrapper_mut(&mut self) -> &mut Wrapper<'a, N> {
+    pub unsafe fn wrapper_mut(&mut self) -> &mut Wrapper<'a> {
         #[cfg(feature = "log")]
         trace!("Value::wrapper_mut");
 
@@ -436,7 +380,7 @@ impl<'a, const N: usize, T> Value<'a, N, T> {
     }
 }
 
-impl<'a, const N: usize, T> Deref for Value<'a, N, T> {
+impl<'a, T> Deref for Value<'a, T> {
     type Target = T;
 
     fn deref(&self) -> &Self::Target {
@@ -447,7 +391,7 @@ impl<'a, const N: usize, T> Deref for Value<'a, N, T> {
         unsafe { &*self.wrapper[..].as_ptr().cast() }
     }
 }
-impl<'a, const N: usize, T> DerefMut for Value<'a, N, T> {
+impl<'a, T> DerefMut for Value<'a, T> {
     fn deref_mut(&mut self) -> &mut Self::Target {
         #[cfg(feature = "log")]
         trace!("Value::deref_mut");
@@ -458,16 +402,16 @@ impl<'a, const N: usize, T> DerefMut for Value<'a, N, T> {
 }
 
 #[derive(Debug)]
-#[cfg_attr(feature = "repr_c", repr(C))]
-pub struct Wrapper<'a, const N: usize> {
-    allocator: &'a Allocator<N>,
+#[repr(C)]
+pub struct Wrapper<'a> {
+    allocator: &'a Allocator,
     index: usize,
     size: usize,
 }
 
-impl<'a, const N: usize> Wrapper<'a, N> {
+impl<'a> Wrapper<'a> {
     #[must_use]
-    pub fn allocator(&self) -> &Allocator<N> {
+    pub fn allocator(&self) -> &Allocator {
         #[cfg(feature = "log")]
         trace!("Wrapper::allocator");
 
@@ -478,7 +422,7 @@ impl<'a, const N: usize> Wrapper<'a, N> {
     ///
     /// You almost definitely should not use this, it is extremely unsafe and can invalidate all
     /// memory of the allocator to which this belongs.
-    pub unsafe fn allocator_mut(&mut self) -> &mut &'a Allocator<N> {
+    pub unsafe fn allocator_mut(&mut self) -> &mut &'a Allocator {
         #[cfg(feature = "log")]
         trace!("Wrapper::allocator_mut");
 
@@ -524,7 +468,7 @@ impl<'a, const N: usize> Wrapper<'a, N> {
     }
 }
 
-impl<'a, const N: usize> Deref for Wrapper<'a, N> {
+impl<'a> Deref for Wrapper<'a> {
     type Target = [Block];
 
     fn deref(&self) -> &Self::Target {
@@ -534,21 +478,9 @@ impl<'a, const N: usize> Deref for Wrapper<'a, N> {
         // We circumvent acquiring a guard as we don't need to lock to safely dereference allocated
         // memory.
 
-        #[cfg(feature = "repr_c")]
-        let inner_allocator = unsafe { &*(self.allocator.0.get()) };
+        let inner_allocator = unsafe { &mut *(self.allocator.0.get()) };
 
-        #[cfg(not(feature = "repr_c"))]
-        #[allow(mutable_transmutes)]
-        let inner_allocator = unsafe {
-            std::mem::transmute::<
-                &std::sync::Mutex<InnerAllocator<N>>,
-                &mut std::sync::Mutex<InnerAllocator<N>>,
-            >(&self.allocator.0)
-            .get_mut()
-            .unwrap()
-        };
-
-        let slice = &inner_allocator.data[self.index..self.index + self.size];
+        let slice = unsafe { &inner_allocator.data().as_ref()[self.index..self.index + self.size] };
 
         #[cfg(feature = "log")]
         trace!("Wrapper::deref exit");
@@ -556,7 +488,7 @@ impl<'a, const N: usize> Deref for Wrapper<'a, N> {
         slice
     }
 }
-impl<'a, const N: usize> DerefMut for Wrapper<'a, N> {
+impl<'a> DerefMut for Wrapper<'a> {
     fn deref_mut(&mut self) -> &mut Self::Target {
         #[cfg(feature = "log")]
         trace!("Wrapper::deref_mut enter");
@@ -564,21 +496,10 @@ impl<'a, const N: usize> DerefMut for Wrapper<'a, N> {
         // We circumvent acquiring a guard as we don't need to lock to safely dereference allocated
         // memory.
 
-        #[cfg(feature = "repr_c")]
         let inner_allocator = unsafe { &mut *(self.allocator.0.get()) };
 
-        #[cfg(not(feature = "repr_c"))]
-        #[allow(mutable_transmutes)]
-        let inner_allocator = unsafe {
-            std::mem::transmute::<
-                &std::sync::Mutex<InnerAllocator<N>>,
-                &mut std::sync::Mutex<InnerAllocator<N>>,
-            >(&self.allocator.0)
-            .get_mut()
-            .unwrap()
-        };
-
-        let slice = &mut inner_allocator.data[self.index..self.index + self.size];
+        let slice =
+            unsafe { &mut inner_allocator.data().as_mut()[self.index..self.index + self.size] };
 
         #[cfg(feature = "log")]
         trace!("Wrapper::deref_mut exit");
@@ -587,7 +508,7 @@ impl<'a, const N: usize> DerefMut for Wrapper<'a, N> {
     }
 }
 
-impl<'a, const N: usize> Drop for Wrapper<'a, N> {
+impl<'a> Drop for Wrapper<'a> {
     fn drop(&mut self) {
         #[cfg(feature = "log")]
         trace!("Wrapper::drop enter");
@@ -599,6 +520,7 @@ impl<'a, const N: usize> Drop for Wrapper<'a, N> {
         let mut inner_allocator_guard = self.allocator.0.lock().unwrap();
         // To avoid a massive number of mutex deref calls we deref here.
         let inner_allocator = &mut *inner_allocator_guard;
+        let data = unsafe { inner_allocator.data().as_mut() };
 
         // ┌───┬─────┬───┐
         // │...│index│...│
@@ -611,9 +533,9 @@ impl<'a, const N: usize> Drop for Wrapper<'a, N> {
                 // │...│self│head│...│
                 // └───┴────┴────┴───┘
                 Ordering::Equal => {
-                    inner_allocator.data[self.index] = Block {
-                        size: self.size + inner_allocator.data[head].size,
-                        next: inner_allocator.data[head].next,
+                    data[self.index] = Block {
+                        size: self.size + data[head].size,
+                        next: data[head].next,
                     };
                     inner_allocator.head = Some(self.index);
                 }
@@ -621,7 +543,7 @@ impl<'a, const N: usize> Drop for Wrapper<'a, N> {
                 // │...│self│...│head│...│
                 // └───┴────┴───┴────┴───┘
                 Ordering::Less => {
-                    inner_allocator.data[self.index] = Block {
+                    data[self.index] = Block {
                         size: self.size,
                         next: inner_allocator.head,
                     };
@@ -634,12 +556,9 @@ impl<'a, const N: usize> Drop for Wrapper<'a, N> {
                     // If `self` was allocated properly
                     let mut current_index = head;
                     loop {
-                        let current_end = current_index + inner_allocator.data[current_index].size;
+                        let current_end = current_index + data[current_index].size;
 
-                        match (
-                            current_end == self.index,
-                            inner_allocator.data[current_index].next,
-                        ) {
+                        match (current_end == self.index, data[current_index].next) {
                             // ┌───┬─────┬────┬────┬───┐
                             // │...│index│self│next│...│
                             // └───┴─────┴────┴────┴───┘
@@ -647,10 +566,8 @@ impl<'a, const N: usize> Drop for Wrapper<'a, N> {
                             // block.
                             (true, Some(next_index)) if next_index == end => {
                                 // Update the size and next of the current block and return.
-                                inner_allocator.data[current_index].next =
-                                    inner_allocator.data[next_index].next;
-                                inner_allocator.data[current_index].size +=
-                                    self.size + inner_allocator.data[next_index].size;
+                                data[current_index].next = data[next_index].next;
+                                data[current_index].size += self.size + data[next_index].size;
                                 // ┌───┬───────────────┬───┐
                                 // │...│index          │...│
                                 // └───┴───────────────┴───┘
@@ -664,7 +581,7 @@ impl<'a, const N: usize> Drop for Wrapper<'a, N> {
                             (true, Some(next_index)) => {
                                 // Update the size of the current block and return.
                                 debug_assert!(next_index > end);
-                                inner_allocator.data[current_index].size += self.size;
+                                data[current_index].size += self.size;
                                 // ┌───┬──────────┬───┬────┬───┐
                                 // │...│index     │...│next│...│
                                 // └───┴──────────┴───┴────┴───┘
@@ -676,7 +593,7 @@ impl<'a, const N: usize> Drop for Wrapper<'a, N> {
                             // The self block starts at the current block and there is no next
                             // block.
                             (true, None) => {
-                                inner_allocator.data[current_index].size += self.size;
+                                data[current_index].size += self.size;
                                 // ┌───┬──────────┬───┐
                                 // │...│index     │...│
                                 // └───┴──────────┴───┘
@@ -690,11 +607,11 @@ impl<'a, const N: usize> Drop for Wrapper<'a, N> {
                             (false, Some(next_index)) if next_index == end => {
                                 // Update the size of the self block and the next of the current
                                 // block.
-                                inner_allocator.data[self.index] = Block {
-                                    size: self.size + inner_allocator.data[next_index].size,
-                                    next: inner_allocator.data[next_index].next,
+                                data[self.index] = Block {
+                                    size: self.size + data[next_index].size,
+                                    next: data[next_index].next,
                                 };
-                                inner_allocator.data[current_index].next = Some(self.index);
+                                data[current_index].next = Some(self.index);
                                 // ┌───┬─────┬───┬─────────┬───┐
                                 // │...│index│...│self     │...│
                                 // └───┴─────┴───┴─────────┴───┘
@@ -706,11 +623,11 @@ impl<'a, const N: usize> Drop for Wrapper<'a, N> {
                             // The self block starts after the current block and ends before the
                             // next block.
                             (false, Some(next_index)) if next_index > end => {
-                                inner_allocator.data[self.index] = Block {
+                                data[self.index] = Block {
                                     size: self.size,
-                                    next: inner_allocator.data[current_index].next,
+                                    next: data[current_index].next,
                                 };
-                                inner_allocator.data[current_index].next = Some(self.index);
+                                data[current_index].next = Some(self.index);
                                 break;
                             }
                             // ┌───┬─────┬───┬────┬───┬────┬───┐
@@ -728,11 +645,11 @@ impl<'a, const N: usize> Drop for Wrapper<'a, N> {
                             // The self block starts after the current block and there is no next
                             // block.
                             (false, None) => {
-                                inner_allocator.data[self.index] = Block {
+                                data[self.index] = Block {
                                     size: self.size,
                                     next: None,
                                 };
-                                inner_allocator.data[current_index].next = Some(self.index);
+                                data[current_index].next = Some(self.index);
                                 break;
                             }
                         }
@@ -746,7 +663,7 @@ impl<'a, const N: usize> Drop for Wrapper<'a, N> {
         // If there are no free blocks.
         else {
             inner_allocator.head = Some(self.index);
-            inner_allocator.data[self.index] = Block {
+            data[self.index] = Block {
                 size: self.size,
                 next: None,
             };
@@ -760,16 +677,16 @@ impl<'a, const N: usize> Drop for Wrapper<'a, N> {
 }
 
 #[derive(Debug)]
-#[cfg_attr(feature = "repr_c", repr(C))]
-pub struct Slice<'a, const N: usize, T> {
-    pub wrapper: Wrapper<'a, N>,
+#[repr(C)]
+pub struct Slice<'a, T> {
+    pub wrapper: Wrapper<'a>,
     len: usize,
     __marker: PhantomData<T>,
 }
 
-impl<'a, const N: usize, T> Slice<'a, N, T> {
+impl<'a, T> Slice<'a, T> {
     #[must_use]
-    pub fn allocator(&self) -> &Allocator<N> {
+    pub fn allocator(&self) -> &Allocator {
         #[cfg(feature = "log")]
         trace!("Slice::allocator");
 
@@ -780,7 +697,7 @@ impl<'a, const N: usize, T> Slice<'a, N, T> {
     ///
     /// You almost definitely should not use this, it is extremely unsafe and can invalidate all
     /// memory of the allocator to which this belongs.
-    pub unsafe fn allocator_mut(&mut self) -> &mut &'a Allocator<N> {
+    pub unsafe fn allocator_mut(&mut self) -> &mut &'a Allocator {
         #[cfg(feature = "log")]
         trace!("Slice::allocator_mut");
 
@@ -825,7 +742,7 @@ impl<'a, const N: usize, T> Slice<'a, N, T> {
         &mut self.wrapper.size
     }
 
-    pub fn wrapper(&mut self) -> &Wrapper<'a, N> {
+    pub fn wrapper(&mut self) -> &Wrapper<'a> {
         &self.wrapper
     }
 
@@ -833,7 +750,7 @@ impl<'a, const N: usize, T> Slice<'a, N, T> {
     ///
     /// You almost definitely should not use this, it is extremely unsafe and can invalidate all
     /// memory of the allocator to which this belongs.
-    pub unsafe fn wrapper_mut(&mut self) -> &mut Wrapper<'a, N> {
+    pub unsafe fn wrapper_mut(&mut self) -> &mut Wrapper<'a> {
         &mut self.wrapper
     }
 
@@ -892,7 +809,7 @@ impl<'a, const N: usize, T> Slice<'a, N, T> {
     }
 }
 
-impl<'a, const N: usize, T> Deref for Slice<'a, N, T> {
+impl<'a, T> Deref for Slice<'a, T> {
     type Target = [T];
 
     fn deref(&self) -> &Self::Target {
@@ -909,7 +826,7 @@ impl<'a, const N: usize, T> Deref for Slice<'a, N, T> {
         slice
     }
 }
-impl<'a, const N: usize, T> DerefMut for Slice<'a, N, T> {
+impl<'a, T> DerefMut for Slice<'a, T> {
     fn deref_mut(&mut self) -> &mut Self::Target {
         #[cfg(feature = "log")]
         trace!("Slice::deref_mut enter");
@@ -936,56 +853,48 @@ mod tests {
 
     #[test]
     fn slice_debug() {
-        let allocator = Allocator::<3>::default();
+        let allocator = ArrayAllocator::<3>::new(None);
         let wrapper = allocator.allocate_slice::<u8>(3).unwrap();
 
-        #[cfg(feature = "repr_c")]
         let expected = "Slice { wrapper: Wrapper { allocator: Allocator(Mutex { lock: \
                         Mutex(UnsafeCell { .. }), data: UnsafeCell { .. } }), index: 0, size: 1 \
                         }, len: 3, __marker: PhantomData<u8> }";
-
-        #[cfg(not(feature = "repr_c"))]
-        let expected = "Slice { wrapper: Wrapper { allocator: Allocator(Mutex { data: \
-                        InnerAllocator { head: Some(1), data: [Block { size: 3, next: None }, \
-                        Block { size: 2, next: None }, Block { size: 0, next: None }] }, \
-                        poisoned: false, .. }), index: 0, size: 1 }, len: 3, __marker: \
-                        PhantomData<u8> }";
 
         assert_eq!(format!("{wrapper:?}"), expected);
     }
     #[test]
     fn slice_allocator() {
-        let allocator = Allocator::<3>::default();
+        let allocator = ArrayAllocator::<3>::new(None);
         let wrapper = allocator.allocate_slice::<u8>(3).unwrap();
         let _ = wrapper.allocator();
     }
     #[test]
     fn slice_index() {
-        let allocator = Allocator::<3>::default();
+        let allocator = ArrayAllocator::<3>::new(None);
         let wrapper = allocator.allocate_slice::<u8>(3).unwrap();
         assert_eq!(wrapper.index(), 0);
     }
     #[test]
     fn slice_size() {
-        let allocator = Allocator::<3>::default();
+        let allocator = ArrayAllocator::<3>::new(None);
         let wrapper = allocator.allocate_slice::<u8>(3).unwrap();
         assert_eq!(wrapper.size(), 1);
     }
     #[test]
     fn slice_len() {
-        let allocator = Allocator::<3>::default();
+        let allocator = ArrayAllocator::<3>::new(None);
         let wrapper = allocator.allocate_slice::<u8>(3).unwrap();
         assert_eq!(wrapper.len(), 3);
     }
     #[test]
     fn slice_is_empty() {
-        let allocator = Allocator::<3>::default();
+        let allocator = ArrayAllocator::<3>::new(None);
         let wrapper = allocator.allocate_slice::<u8>(3).unwrap();
         assert!(!wrapper.is_empty());
     }
     #[test]
     fn slice_resize() {
-        let allocator = Allocator::<5>::default();
+        let allocator = ArrayAllocator::<5>::new(None);
         let mut wrapper = allocator.allocate_slice::<u8>(2).unwrap();
         wrapper[0] = 0;
         wrapper[1] = 1;
@@ -995,7 +904,7 @@ mod tests {
     }
     #[test]
     fn slice_deref() {
-        let allocator = Allocator::<3>::default();
+        let allocator = ArrayAllocator::<3>::new(None);
         let mut wrapper = allocator.allocate_slice::<u8>(3).unwrap();
         wrapper[0] = 0;
         assert_eq!(wrapper[0], 0);
@@ -1006,7 +915,7 @@ mod tests {
     }
     #[test]
     fn slice_deref_mut() {
-        let allocator = Allocator::<3>::default();
+        let allocator = ArrayAllocator::<3>::new(None);
         let mut wrapper = allocator.allocate_slice::<u8>(3).unwrap();
         wrapper[0] = 0;
         assert_eq!(wrapper[0], 0);
@@ -1022,7 +931,7 @@ mod tests {
 
         const NUM: std::ops::Range<usize> = 0..5;
         const SIZE: usize = 2 * THREADS * NUM.end;
-        let allocator = Allocator::<SIZE>::default();
+        let allocator = ArrayAllocator::<SIZE>::new(None);
 
         let arc = std::sync::Arc::new(allocator);
         let handles = (0..THREADS)
@@ -1046,61 +955,48 @@ mod tests {
 
     #[test]
     fn value_debug() {
-        let allocator = Allocator::<1>::default();
+        let allocator = ArrayAllocator::<1>::new(None);
         let wrapper = allocator.allocate_value::<u8>().unwrap();
 
-        #[cfg(feature = "repr_c")]
         let expected = "Value { wrapper: Wrapper { allocator: Allocator(Mutex { lock: \
                         Mutex(UnsafeCell { .. }), data: UnsafeCell { .. } }), index: 0, size: 1 \
                         }, __marker: PhantomData<u8> }";
-
-        #[cfg(not(feature = "repr_c"))]
-        let expected = "Value { wrapper: Wrapper { allocator: Allocator(Mutex { data: \
-                        InnerAllocator { head: None, data: [Block { size: 1, next: None }] }, \
-                        poisoned: false, .. }), index: 0, size: 1 }, __marker: PhantomData<u8> }";
 
         assert_eq!(format!("{wrapper:?}"), expected);
     }
     #[test]
     fn value_allocator() {
-        let allocator = Allocator::<1>::default();
+        let allocator = ArrayAllocator::<1>::new(None);
         let wrapper = allocator.allocate_value::<u8>().unwrap();
         let _ = wrapper.allocator();
     }
     #[test]
     fn value_index() {
-        let allocator = Allocator::<1>::default();
+        let allocator = ArrayAllocator::<1>::new(None);
         let wrapper = allocator.allocate_value::<u8>().unwrap();
         assert_eq!(wrapper.index(), 0);
     }
     #[test]
     fn value_size() {
-        let allocator = Allocator::<1>::default();
+        let allocator = ArrayAllocator::<1>::new(None);
         let wrapper = allocator.allocate_value::<u8>().unwrap();
         assert_eq!(wrapper.size(), 1);
     }
     #[test]
     fn value_deref() {
-        let allocator = Allocator::<1>::default();
+        let allocator = ArrayAllocator::<1>::new(None);
         let mut wrapper = allocator.allocate_value::<u8>().unwrap();
         *wrapper = 0;
         assert_eq!(*wrapper, 0);
     }
     #[test]
     fn value_deref_mut() {
-        let allocator = Allocator::<1>::default();
+        let allocator = ArrayAllocator::<1>::new(None);
         let mut wrapper = allocator.allocate_value::<u8>().unwrap();
         *wrapper = 0;
         assert_eq!(*wrapper, 0);
     }
 
-    #[test]
-    fn inner_allocator_debug() {
-        assert_eq!(
-            format!("{:?}", InnerAllocator::<0>::default()),
-            "InnerAllocator { head: None, data: [] }"
-        );
-    }
     #[test]
     fn block_debug() {
         assert_eq!(
@@ -1116,15 +1012,10 @@ mod tests {
     }
     #[test]
     fn wrapper_debug() {
-        let allocator = Allocator::<0>::default();
+        let allocator = ArrayAllocator::<0>::new(None);
 
-        #[cfg(feature = "repr_c")]
         let expected = "Wrapper { allocator: Allocator(Mutex { lock: Mutex(UnsafeCell { .. }), \
                         data: UnsafeCell { .. } }), index: 0, size: 0 }";
-
-        #[cfg(not(feature = "repr_c"))]
-        let expected = "Wrapper { allocator: Allocator(Mutex { data: InnerAllocator { head: None, \
-                        data: [] }, poisoned: false, .. }), index: 0, size: 0 }";
 
         assert_eq!(
             format!(
@@ -1140,36 +1031,36 @@ mod tests {
     }
     #[test]
     fn wrapper_allocator() {
-        let allocator = Allocator::<1>::default();
+        let allocator = ArrayAllocator::<1>::new(None);
         let wrapper = allocator.allocate(1).unwrap();
         let _ = wrapper.allocator();
     }
     #[test]
     fn wrapper_allocator_mut() {
-        let allocator_one = Allocator::<1>::default();
-        let allocator_two = Allocator::<1>::default();
+        let allocator_one = ArrayAllocator::<1>::new(None);
+        let allocator_two = ArrayAllocator::<1>::new(None);
         let mut wrapper = allocator_one.allocate(1).unwrap();
         assert_eq!(
-            wrapper.allocator() as *const Allocator::<1> as usize,
-            &allocator_one as *const Allocator::<1> as usize
+            wrapper.allocator() as *const Allocator as usize,
+            &allocator_one as *const ArrayAllocator::<1> as usize
         );
         unsafe {
             *wrapper.allocator_mut() = &allocator_two;
         }
         assert_eq!(
-            wrapper.allocator() as *const Allocator::<1> as usize,
-            &allocator_two as *const Allocator::<1> as usize
+            wrapper.allocator() as *const Allocator as usize,
+            &allocator_two as *const ArrayAllocator::<1> as usize
         );
     }
     #[test]
     fn wrapper_index() {
-        let allocator = Allocator::<1>::default();
+        let allocator = ArrayAllocator::<1>::new(None);
         let wrapper = allocator.allocate(1).unwrap();
         assert_eq!(wrapper.index(), 0);
     }
     #[test]
     fn wrapper_size() {
-        let allocator = Allocator::<1>::default();
+        let allocator = ArrayAllocator::<1>::new(None);
         let wrapper = allocator.allocate(1).unwrap();
         assert_eq!(wrapper.size(), 1);
     }
@@ -1177,14 +1068,22 @@ mod tests {
     #[test]
     fn allocator() {
         // We hold items in a vec to prevent them being dropped;
-        let memory = Allocator::<5>::default();
+        const SIZE: usize = 5;
+        let memory = ArrayAllocator::<SIZE>::new(None);
         let mut vec = Vec::new();
 
-        assert_eq!(
-            *memory.0.lock().unwrap(),
-            InnerAllocator {
-                head: Some(0),
-                data: [
+        {
+            let mut guard = memory.0.lock().unwrap();
+            assert_eq!(
+                *guard,
+                InnerAllocator {
+                    head: Some(0),
+                    size: SIZE
+                }
+            );
+            assert_eq!(
+                unsafe { guard.data().as_ref() },
+                [
                     Block {
                         size: 5,
                         next: None,
@@ -1206,16 +1105,23 @@ mod tests {
                         next: None,
                     },
                 ]
-            }
-        );
+            );
+        }
 
         vec.push(memory.allocate(1));
 
-        assert_eq!(
-            *memory.0.lock().unwrap(),
-            InnerAllocator {
-                head: Some(1),
-                data: [
+        {
+            let mut guard = memory.0.lock().unwrap();
+            assert_eq!(
+                *guard,
+                InnerAllocator {
+                    head: Some(1),
+                    size: SIZE
+                }
+            );
+            assert_eq!(
+                unsafe { guard.data().as_ref() },
+                [
                     Block {
                         size: 5,
                         next: None,
@@ -1237,16 +1143,23 @@ mod tests {
                         next: None,
                     },
                 ]
-            }
-        );
+            );
+        }
 
         vec.push(memory.allocate(2));
 
-        assert_eq!(
-            *memory.0.lock().unwrap(),
-            InnerAllocator {
-                head: Some(3),
-                data: [
+        {
+            let mut guard = memory.0.lock().unwrap();
+            assert_eq!(
+                *guard,
+                InnerAllocator {
+                    head: Some(3),
+                    size: SIZE
+                }
+            );
+            assert_eq!(
+                unsafe { guard.data().as_ref() },
+                [
                     Block {
                         size: 5,
                         next: None,
@@ -1268,16 +1181,23 @@ mod tests {
                         next: None,
                     },
                 ]
-            }
-        );
+            );
+        }
 
         vec.pop();
 
-        assert_eq!(
-            *memory.0.lock().unwrap(),
-            InnerAllocator {
-                head: Some(1),
-                data: [
+        {
+            let mut guard = memory.0.lock().unwrap();
+            assert_eq!(
+                *guard,
+                InnerAllocator {
+                    head: Some(1),
+                    size: SIZE
+                }
+            );
+            assert_eq!(
+                unsafe { guard.data().as_ref() },
+                [
                     Block {
                         size: 5,
                         next: None,
@@ -1299,16 +1219,23 @@ mod tests {
                         next: None,
                     },
                 ]
-            }
-        );
+            );
+        }
 
         vec.pop();
 
-        assert_eq!(
-            *memory.0.lock().unwrap(),
-            InnerAllocator {
-                head: Some(0),
-                data: [
+        {
+            let mut guard = memory.0.lock().unwrap();
+            assert_eq!(
+                *guard,
+                InnerAllocator {
+                    head: Some(0),
+                    size: SIZE
+                }
+            );
+            assert_eq!(
+                unsafe { guard.data().as_ref() },
+                [
                     Block {
                         size: 5,
                         next: None,
@@ -1330,68 +1257,58 @@ mod tests {
                         next: None,
                     },
                 ]
-            }
-        );
+            );
+        }
 
         drop(vec);
     }
 
     #[test]
-    fn allocator_debug() {
-        #[cfg(feature = "repr_c")]
-        let expected =
-            "Allocator(Mutex { lock: Mutex(UnsafeCell { .. }), data: UnsafeCell { .. } })";
-        #[cfg(not(feature = "repr_c"))]
-        let expected = "Allocator(Mutex { data: InnerAllocator { head: None, data: [] }, \
-                        poisoned: false, .. })";
+    fn array_allocator_debug() {
+        let expected = "ArrayAllocator { allocator: Allocator(Mutex { lock: Mutex(UnsafeCell { .. \
+                        }), data: UnsafeCell { .. } }), data: [] }";
 
-        assert_eq!(format!("{:?}", Allocator::<0>::default()), expected);
+        assert_eq!(format!("{:?}", ArrayAllocator::<0>::new(None)), expected);
     }
-    #[cfg(feature = "repr_c")]
+
     #[test]
     fn allocator_init() {
-        let mut uninit_allocator = std::mem::MaybeUninit::uninit();
-        unsafe {
-            <Allocator<3>>::init(uninit_allocator.as_mut_ptr(), None);
-        }
+        let _ = ArrayAllocator::<3>::new(None);
     }
-    #[cfg(feature = "repr_c")]
+
     #[test]
     fn allocator_init_zero() {
-        let mut uninit_allocator = std::mem::MaybeUninit::uninit();
-        unsafe {
-            <Allocator<0>>::init(uninit_allocator.as_mut_ptr(), None);
-        }
+        let _ = ArrayAllocator::<0>::new(None);
     }
 
     #[test]
     fn allocate_value() {
-        let allocator = Allocator::<1>::default();
+        let allocator = ArrayAllocator::<1>::new(None);
         allocator.allocate_value::<()>().unwrap();
     }
     #[test]
     fn allocate_slice() {
-        let allocator = Allocator::<1>::default();
+        let allocator = ArrayAllocator::<1>::new(None);
         allocator.allocate_slice::<u8>(size_of::<Block>()).unwrap();
     }
 
     // Tests `Wrapper::allocate` `blocks.cmp(&allocator.data[next].size) == Equal` case.
     #[test]
     fn allocate_0() {
-        let memory = Allocator::<1>::default();
+        let memory = ArrayAllocator::<1>::new(None);
         memory.allocate(1).unwrap();
     }
     // Tests `Wrapper::allocate` `blocks.cmp(&allocator.data[next].size) == Less` case.
     #[test]
     fn allocate_1() {
-        let memory = Allocator::<2>::default();
+        let memory = ArrayAllocator::<2>::new(None);
         memory.allocate(1).unwrap();
     }
     // Tests `Wrapper::allocate` `blocks.cmp(&allocator.data[next].size) == Greater`
     // `blocks.cmp(&allocator.data[next].size) == Equal` case.
     #[test]
     fn allocate_2() {
-        let memory = Allocator::<4>::default();
+        let memory = ArrayAllocator::<4>::new(None);
         let a = memory.allocate(1).unwrap();
         let b = memory.allocate(1).unwrap();
 
@@ -1405,7 +1322,7 @@ mod tests {
     // `blocks.cmp(&allocator.data[next].size) == Less` case.
     #[test]
     fn allocate_3() {
-        let memory = Allocator::<5>::default();
+        let memory = ArrayAllocator::<5>::new(None);
         let a = memory.allocate(1).unwrap();
         let b = memory.allocate(1).unwrap();
 
@@ -1419,7 +1336,7 @@ mod tests {
     // `blocks.cmp(&allocator.data[next].size) == Greater` case.
     #[test]
     fn allocate_4() {
-        let memory = Allocator::<7>::default();
+        let memory = ArrayAllocator::<7>::new(None);
         let a = memory.allocate(1).unwrap();
         let b = memory.allocate(1).unwrap();
         let c = memory.allocate(2).unwrap();
@@ -1434,7 +1351,7 @@ mod tests {
     // Tests `Wrapper::allocate` `blocks.cmp(&allocator.data[next].size) == Greater` `None` case.
     #[test]
     fn allocate_5() {
-        let memory = Allocator::<6>::default();
+        let memory = ArrayAllocator::<6>::new(None);
         let a = memory.allocate(1).unwrap();
         let b = memory.allocate(1).unwrap();
         let c = memory.allocate(2).unwrap();
@@ -1449,7 +1366,7 @@ mod tests {
     // Tests `Wrapper::allocate` `None` header case.
     #[test]
     fn allocate_6() {
-        let memory = Allocator::<0>::default();
+        let memory = ArrayAllocator::<0>::new(None);
         assert!(memory.allocate(1).is_none());
     }
 
@@ -1459,7 +1376,7 @@ mod tests {
     // └───┘
     #[test]
     fn drop_1() {
-        let memory = Allocator::<1>::default();
+        let memory = ArrayAllocator::<1>::new(None);
         let item = memory.allocate(1).unwrap();
         drop(item);
         drop(memory);
@@ -1470,7 +1387,7 @@ mod tests {
     // └───┴────┴────┴───┘
     #[test]
     fn drop_2() {
-        let memory = Allocator::<1>::default();
+        let memory = ArrayAllocator::<1>::new(None);
         let item = memory.allocate(1).unwrap();
         drop(item);
         drop(memory);
@@ -1481,7 +1398,7 @@ mod tests {
     // └───┴────┴───┴────┴───┘
     #[test]
     fn drop_3() {
-        let memory = Allocator::<2>::default();
+        let memory = ArrayAllocator::<2>::new(None);
 
         let first = memory.allocate(1).unwrap();
         let second = memory.allocate(1).unwrap(); // self
@@ -1497,7 +1414,7 @@ mod tests {
     // └───┴─────┴────┴────┴───┘
     #[test]
     fn drop_4() {
-        let memory = Allocator::<4>::default();
+        let memory = ArrayAllocator::<4>::new(None);
 
         let a = memory.allocate(1).unwrap();
         let b = memory.allocate(1).unwrap(); // index
@@ -1524,7 +1441,7 @@ mod tests {
     // └───┴─────┴────┴───┴────┴───┘
     #[test]
     fn drop_5() {
-        let memory = Allocator::<5>::default();
+        let memory = ArrayAllocator::<5>::new(None);
 
         let a = memory.allocate(1).unwrap(); // ...
         let b = memory.allocate(1).unwrap(); // index
@@ -1552,7 +1469,7 @@ mod tests {
     // └───┴─────┴────┴───┘
     #[test]
     fn drop_6() {
-        let memory = Allocator::<3>::default();
+        let memory = ArrayAllocator::<3>::new(None);
 
         let a = memory.allocate(1).unwrap();
         let b = memory.allocate(1).unwrap(); // index
@@ -1577,7 +1494,7 @@ mod tests {
     // └───┴─────┴───┴────┴────┴───┘
     #[test]
     fn drop_7() {
-        let memory = Allocator::<5>::default();
+        let memory = ArrayAllocator::<5>::new(None);
 
         let a = memory.allocate(1).unwrap();
         let b = memory.allocate(1).unwrap(); // index
@@ -1607,7 +1524,7 @@ mod tests {
     // └───┴─────┴───┴────┴───┴────┴───┘
     #[test]
     fn drop_8() {
-        let memory = Allocator::<6>::default();
+        let memory = ArrayAllocator::<6>::new(None);
 
         let a = memory.allocate(1).unwrap();
         let b = memory.allocate(1).unwrap(); // index
@@ -1639,7 +1556,7 @@ mod tests {
     // └───┴─────┴───┴────┴───┴────┴───┘
     #[test]
     fn drop_9() {
-        let memory = Allocator::<6>::default();
+        let memory = ArrayAllocator::<6>::new(None);
 
         let a = memory.allocate(1).unwrap();
         let b = memory.allocate(1).unwrap(); // index
@@ -1671,7 +1588,7 @@ mod tests {
     // └───┴─────┴───┴────┴───┘
     #[test]
     fn drop_10() {
-        let memory = Allocator::<4>::default();
+        let memory = ArrayAllocator::<4>::new(None);
 
         let a = memory.allocate(1).unwrap();
         let b = memory.allocate(1).unwrap(); // index

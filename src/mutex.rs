@@ -1,6 +1,5 @@
 #![allow(clippy::module_name_repetitions)]
 
-#[cfg(feature = "repr_c")]
 #[derive(Debug)]
 #[repr(C)]
 pub struct Mutex<T> {
