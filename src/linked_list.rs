@@ -1,6 +1,7 @@
 use std::cmp::Ordering;
 use std::marker::PhantomData;
 use std::mem::size_of;
+use std::num::NonZeroUsize;
 use std::ops::{Deref, DerefMut, Drop};
 use std::ptr::NonNull;
 
@@ -65,22 +66,28 @@ impl Allocator {
         <InnerAllocator>::init((*ptr).0.get(), n);
     }
 
-    /// Allocates a given number of blocks.
+    /// Allocates zero blocks.
+    pub fn allocate_zero(&self) -> Wrapper {
+        #[cfg(feature = "log")]
+        trace!("Allocator::allocate_zero");
+
+        Wrapper {
+            allocator: self,
+            index: 0,
+            size: 0,
+        }
+    }
+
+    /// Allocates a non-zero number of blocks.
     ///
     /// # Panics
     ///
     /// When locking the mutex fails.
-    pub fn allocate(&self, blocks: usize) -> Option<Wrapper> {
+    pub fn allocate_nonzero(&self, blocks: NonZeroUsize) -> Option<Wrapper> {
         #[cfg(feature = "log")]
-        trace!("Allocator::allocate");
+        trace!("Allocator::allocate_nonzero");
 
-        if blocks == 0 {
-            return Some(Wrapper {
-                allocator: self,
-                index: 0,
-                size: 0,
-            });
-        }
+        let blocks = blocks.get();
 
         let mut allocator_guard = self.0.lock().unwrap();
         let allocator = &mut *allocator_guard;
@@ -154,12 +161,63 @@ impl Allocator {
         rtn
     }
 
+    /// Allocates a given number of blocks.
+    ///
+    /// # Panics
+    ///
+    /// When locking the mutex fails.
+    pub fn allocate(&self, blocks: usize) -> Option<Wrapper> {
+        #[cfg(feature = "log")]
+        trace!("Allocator::allocate");
+
+        if let Ok(nonzero) = NonZeroUsize::try_from(blocks) {
+            self.allocate_nonzero(nonzero)
+        } else {
+            Some(self.allocate_zero())
+        }
+    }
+
     pub fn allocate_value<T>(&self) -> Option<Value<T>> {
         #[cfg(feature = "log")]
         trace!("Allocator::allocate_value");
         let blocks = size_of::<T>().div_ceil(size_of::<Block>());
         self.allocate(blocks).map(|wrapper| Value {
             wrapper,
+            __marker: PhantomData,
+        })
+    }
+
+    /// Allocates `[T]` where `length == 0`.
+    pub fn allocate_zero_slice<T>(&self) -> Slice<T> {
+        #[cfg(feature = "log")]
+        trace!("Allocator::allocate_zero_slice");
+
+        Slice {
+            wrapper: self.allocate_zero(),
+            len: 0,
+            __marker: PhantomData,
+        }
+    }
+
+    /// Allocates `[T]` where `length > 0`.
+    ///
+    /// # Panics
+    ///
+    /// When locking the mutex fails.
+    pub fn allocate_nonzero_slice<T>(&self, len: NonZeroUsize) -> Option<Slice<T>> {
+        #[cfg(feature = "log")]
+        trace!("Allocator::allocate_nonzero_slice");
+
+        let len = len.get();
+
+        let blocks =
+            NonZeroUsize::try_from((len * size_of::<T>()).div_ceil(size_of::<Block>())).unwrap();
+
+        debug_assert!(blocks.get() * size_of::<Block>() >= len * size_of::<T>());
+
+        self.allocate_nonzero(blocks).map(|wrapper| Slice {
+            wrapper,
+            len,
             __marker: PhantomData,
         })
     }
@@ -173,19 +231,11 @@ impl Allocator {
         #[cfg(feature = "log")]
         trace!("Allocator::allocate_slice");
 
-        let blocks = (len * size_of::<T>()).div_ceil(size_of::<Block>());
-
-        debug_assert!(blocks * size_of::<Block>() >= len * size_of::<T>());
-        #[cfg(debug_assertions)]
-        if len == 0 {
-            assert_eq!(blocks, 0);
+        if let Ok(nonzero) = NonZeroUsize::try_from(len) {
+            self.allocate_nonzero_slice(nonzero)
+        } else {
+            Some(self.allocate_zero_slice())
         }
-
-        self.allocate(blocks).map(|wrapper| Slice {
-            wrapper,
-            len,
-            __marker: PhantomData,
-        })
     }
 
     /// # Safety
